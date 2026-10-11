@@ -613,7 +613,7 @@ test "Context editor ABI rejects malformed arguments without side effects" {
     style.struct_size = @sizeOf(c.ot_editor_style);
     style.abi_version = c.OT_CONTEXT_ABI_VERSION;
     const chunks = std.mem.zeroes([2]c.ot_styled_text_chunk);
-    for (0..18) |row| {
+    for (0..19) |row| {
         const status = switch (row) {
             0 => ot_edit_buffer_set_tab_width(&owner, &edit_id, 256),
             1 => ot_edit_buffer_command(&owner, &edit_id, c.OT_EDIT_DEBUG_ROPE + 1, 0),
@@ -622,10 +622,10 @@ test "Context editor ABI rejects malformed arguments without side effects" {
             4 => ot_edit_buffer_history(&owner, &edit_id, 0, &bytes, bytes.len - 1, &count),
             5 => abi.ot_edit_buffer_set_text(&owner, &edit_id, "x", 1, 2),
             6 => abi.ot_edit_buffer_set_text(&owner, &edit_id, null, 1, 0),
-            // C0, C1 and DEL bytes other than tab, CR and LF are rejected whole.
-            7 => abi.ot_edit_buffer_set_text(&owner, &edit_id, "a\x0cb", 3, 1),
-            8 => abi.ot_edit_buffer_insert_text(&owner, &edit_id, "a\x00", 2),
-            9 => abi.ot_edit_buffer_insert_text(&owner, &edit_id, "\xc2\x85", 2),
+            // Invalid UTF-8 rejects the whole edit, controls included.
+            7 => abi.ot_edit_buffer_set_text(&owner, &edit_id, "\x0c\xff", 2, 1),
+            8 => abi.ot_edit_buffer_insert_text(&owner, &edit_id, "a\x00\xc2", 3),
+            9 => ot_editor_view_replace_selection(&owner, &view_id, "\xc2\x85\xe4\xb8", 4, &count),
             10 => ot_edit_buffer_get_position(&owner, &edit_id, c.OT_EDIT_POSITION_LINE_START + 1, 0, 0, &position),
             11 => ot_edit_buffer_get_range(&owner, &edit_id, 2, 0, 0, 0, 1, &bytes, bytes.len, &count),
             12 => ot_edit_buffer_set_defaults(&owner, &edit_id, 0, &style),
@@ -634,6 +634,7 @@ test "Context editor ABI rejects malformed arguments without side effects" {
             15 => ot_editor_view_command(&owner, &view_id, c.OT_EDITOR_WRAP_MODE, c.OT_SCENE_WRAP_WORD + 1),
             16 => ot_editor_view_replace_selection(&owner, &view_id, "x", 1, null),
             17 => ot_editor_view_set_placeholder(&owner, &view_id, "a", 1, &chunks, chunks.len),
+            18 => ot_editor_view_set_placeholder(&owner, &view_id, "\x0c\xff", 2, &chunks, 0),
             else => unreachable,
         };
         try std.testing.expectEqual(c.OT_INVALID_ARGUMENT, status);
@@ -660,6 +661,54 @@ test "Context history-preserving set_text needs no registry slot per call" {
         _ = try core.editHistory(id, false);
         try std.testing.expectEqualStrings(try std.fmt.bufPrint(&expected, "v{d}", .{index - 1}), actual[0..buffer.getText(&actual)]);
     }
+}
+
+test "Context editing drops controls that the cell cursor cannot address" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const core = try ctx.Context.init(failing.allocator(), std.testing.io, .{});
+    defer core.deinit() catch unreachable;
+    const edit_id = try core.createEditBuffer(.unicode);
+    const view_id = try core.createEditorView(edit_id, 8, 2);
+    const buffer = (try core.raw().getEditBuffer(edit_id)).buffer;
+    var text: [16]u8 = undefined;
+
+    // Of the C0, DEL, and C1 code points, only tab, line feed, and carriage return stay.
+    var codepoint: u21 = 0;
+    while (codepoint <= 0xa0) : (codepoint += 1) {
+        var input: [4]u8 = undefined;
+        input[0] = 'a';
+        const length = std.unicode.utf8Encode(codepoint, input[1..]) catch unreachable;
+        input[1 + length] = 'b';
+        try core.editSetText(edit_id, input[0 .. length + 2], false);
+        const control = codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f);
+        const dropped = control and codepoint != '\t' and codepoint != '\n' and codepoint != '\r';
+        try std.testing.expectEqual(dropped, std.mem.eql(u8, "ab", text[0..buffer.getText(&text)]));
+    }
+
+    try core.editSetText(edit_id, "x\x0cy\xc2\x85z\x00", false);
+    try std.testing.expectEqualStrings("xyz", text[0..buffer.getText(&text)]);
+    try core.editSetText(edit_id, "v\x1b1", true);
+    try std.testing.expectEqualStrings("v1", text[0..buffer.getText(&text)]);
+    try core.editSetCursor(edit_id, 0, 2);
+    try core.editInsertText(edit_id, "\x7fc");
+    try std.testing.expectEqualStrings("v1c", text[0..buffer.getText(&text)]);
+    try std.testing.expectEqual(@as(u32, 3), buffer.getPrimaryCursor().col);
+    _ = try core.editorSelect(view_id, .{ .operation = .set, .start = 0, .end = 2 });
+    _ = try core.editorReplaceSelection(view_id, "\xc2\x9fw");
+    try std.testing.expectEqualStrings("wc", text[0..buffer.getText(&text)]);
+
+    // A filtered copy that cannot be allocated leaves the buffer unchanged.
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, core.editInsertText(edit_id, "\x00d"));
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqualStrings("wc", text[0..buffer.getText(&text)]);
+    try std.testing.expect(!core.mutating);
+
+    // The cursor never enters a placeholder, so a placeholder keeps its controls.
+    try core.editSetText(edit_id, "", false);
+    try core.editorSetPlaceholder(view_id, "a\x0cb", &.{.{ .byte_count = 3 }});
+    const placeholder = (try core.raw().getEditorView(view_id)).view.placeholder_buffer.?;
+    try std.testing.expectEqualStrings("a\x0cb", text[0..placeholder.getPlainTextIntoBuffer(&text)]);
 }
 
 test "Context editor accepted deletion does not return a later layout allocation failure" {

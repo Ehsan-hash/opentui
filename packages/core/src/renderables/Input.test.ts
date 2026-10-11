@@ -628,6 +628,18 @@ describe("InputRenderable", () => {
       expect(inputEventFired).toBe(true)
       expect(inputValue).toBe("changed")
     })
+
+    it.each(["constructor", "value", "insertText"] as const)("%s drops controls before it counts maxLength", (path) => {
+      const text = "\u0000a\fb\u0085c\r\nd"
+      const { input } = createInputRenderable({ width: 20, maxLength: 3, value: path === "constructor" ? text : "" })
+      const values: string[] = []
+      input.on(InputRenderableEvents.INPUT, (value: string) => values.push(value))
+      if (path === "value") input.value = text
+      if (path === "insertText") input.insertText(text)
+      expect(input.value).toBe("abc")
+      expect(input.cursorOffset).toBe(3)
+      expect(values).toEqual(path === "constructor" ? [] : ["abc"])
+    })
   })
 
   describe("Input Properties", () => {

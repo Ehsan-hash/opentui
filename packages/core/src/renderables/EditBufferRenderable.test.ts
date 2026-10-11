@@ -10,9 +10,10 @@ import { RGBA } from "../lib/RGBA.js"
 describe("EditBufferRenderable", () => {
   let renderer: TestRenderer
   let renderOnce: () => Promise<void>
+  let captureCharFrame: () => string
 
   beforeEach(async () => {
-    ;({ renderer, renderOnce } = await createTestRenderer({ width: 40, height: 20 }))
+    ;({ renderer, renderOnce, captureCharFrame } = await createTestRenderer({ width: 40, height: 20 }))
   })
 
   afterEach(() => {
@@ -30,6 +31,23 @@ describe("EditBufferRenderable", () => {
     editor.placeholderColor = color
     await renderOnce()
     expect(renderer.currentRenderBuffer.getSpanLines()[0].spans[0]).toMatchObject({ text: "kept", fg: color })
+  })
+
+  test("Textarea drops controls that the cell cursor cannot address", async () => {
+    const editor = new TextareaRenderable(renderer, {
+      initialValue: "a\fb\u0000c\u0085",
+      placeholder: "p\u001bq",
+      width: 20,
+      height: 2,
+    })
+    renderer.root.add(editor)
+    expect(editor.plainText).toBe("abc")
+    editor.insertText("\u007fd")
+    expect(editor.plainText).toBe("dabc")
+    editor.replaceText("\u0001")
+    expect(editor.plainText).toBe("")
+    await renderOnce()
+    expect(captureCharFrame()).toContain("pq")
   })
 
   test("brands textarea and input instances", async () => {

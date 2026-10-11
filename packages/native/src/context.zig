@@ -2371,15 +2371,59 @@ pub const Context = struct {
         if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUnicode;
     }
 
-    fn validateEditTextBytes(text: *const text_buffer.UnifiedTextBuffer, bytes: []const u8, retained_bytes: u32) !void {
-        try validateTextBytes(text, bytes, retained_bytes);
-        // Cell-based editing cannot navigate standalone zero-width controls yet.
-        var codepoints = std.unicode.Utf8View.initUnchecked(bytes).iterator();
-        while (codepoints.nextCodepoint()) |codepoint| {
-            if ((codepoint < 0x20 and codepoint != '\t' and codepoint != '\r' and codepoint != '\n') or
-                (codepoint >= 0x7f and codepoint <= 0x9f)) return error.InvalidUnicode;
+    /// Editors place the cursor by display cell. A standalone control has zero width, so the
+    /// cursor could neither move past it nor delete it. Editing drops these controls instead of
+    /// rejecting the whole edit. Tab, carriage return, and line feed have editing behavior of
+    /// their own and stay.
+    const EditableText = struct {
+        bytes: []const u8,
+        owned: ?[]u8,
+
+        fn init(
+            allocator: std.mem.Allocator,
+            text: *const text_buffer.UnifiedTextBuffer,
+            bytes: []const u8,
+            retained_bytes: u32,
+        ) !EditableText {
+            try Context.validateTextBytes(text, bytes, retained_bytes);
+            const dropped_bytes = controlByteCount(bytes);
+            if (dropped_bytes == 0) return .{ .bytes = bytes, .owned = null };
+            const owned = try allocator.alloc(u8, bytes.len - dropped_bytes);
+            copyWithoutControls(owned, bytes);
+            return .{ .bytes = owned, .owned = owned };
         }
-    }
+
+        fn deinit(self: EditableText, allocator: std.mem.Allocator) void {
+            if (self.owned) |owned| allocator.free(owned);
+        }
+
+        fn isControl(codepoint: u21) bool {
+            if (codepoint == '\t' or codepoint == '\n' or codepoint == '\r') return false;
+            return codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f);
+        }
+
+        /// `bytes` must be valid UTF-8.
+        fn controlByteCount(bytes: []const u8) usize {
+            var count: usize = 0;
+            var codepoints = std.unicode.Utf8View.initUnchecked(bytes).iterator();
+            while (codepoints.nextCodepointSlice()) |slice| {
+                if (isControl(std.unicode.utf8Decode(slice) catch unreachable)) count += slice.len;
+            }
+            return count;
+        }
+
+        /// `target` must hold exactly the bytes of `bytes` that are not dropped controls.
+        fn copyWithoutControls(target: []u8, bytes: []const u8) void {
+            var length: usize = 0;
+            var codepoints = std.unicode.Utf8View.initUnchecked(bytes).iterator();
+            while (codepoints.nextCodepointSlice()) |slice| {
+                if (isControl(std.unicode.utf8Decode(slice) catch unreachable)) continue;
+                @memcpy(target[length..][0..slice.len], slice);
+                length += slice.len;
+            }
+            std.debug.assert(length == target.len);
+        }
+    };
 
     pub fn sceneSetStyledText(self: *Context, handle: Handle, bytes: []const u8, chunks: []const StyledTextChunk) !void {
         try self.beginMutation();
@@ -3393,11 +3437,12 @@ pub const Context = struct {
         defer self.mutating = false;
         const edit = try self.getEditBuffer(handle);
         try edit.checkMutable();
-        try validateEditTextBytes(edit.buffer.tb, bytes, 0);
+        const text = try EditableText.init(self.allocator, edit.buffer.tb, bytes, 0);
+        defer text.deinit(self.allocator);
         if (preserve_history) {
-            try edit.buffer.replaceText(bytes);
+            try edit.buffer.replaceText(text.bytes);
         } else {
-            edit.input_mem_id = try edit.buffer.setTextOwned(bytes, edit.input_mem_id);
+            edit.input_mem_id = try edit.buffer.setTextOwned(text.bytes, edit.input_mem_id);
         }
     }
 
@@ -3406,8 +3451,9 @@ pub const Context = struct {
         defer self.mutating = false;
         const edit = try self.getEditBuffer(handle);
         try edit.checkMutable();
-        try validateEditTextBytes(edit.buffer.tb, bytes, edit.buffer.tb.getByteSize());
-        try edit.buffer.insertText(bytes);
+        const text = try EditableText.init(self.allocator, edit.buffer.tb, bytes, edit.buffer.tb.getByteSize());
+        defer text.deinit(self.allocator);
+        try edit.buffer.insertText(text.bytes);
     }
 
     pub fn editDeleteRange(self: *Context, handle: Handle, start: edit_buffer.Cursor, end: edit_buffer.Cursor) !void {
@@ -3445,7 +3491,7 @@ pub const Context = struct {
             .delete_forward => try edit.buffer.deleteForward(),
             .backspace => try edit.buffer.backspace(),
             .new_line => {
-                try validateEditTextBytes(edit.buffer.tb, "\n", edit.buffer.tb.getByteSize());
+                try validateTextBytes(edit.buffer.tb, "\n", edit.buffer.tb.getByteSize());
                 try edit.buffer.insertText("\n");
             },
             .delete_line => try edit.buffer.deleteLine(),
@@ -3554,8 +3600,9 @@ pub const Context = struct {
         defer self.mutating = false;
         const view = try self.getEditorView(handle);
         try view.edit.checkMutable();
-        try validateEditTextBytes(view.edit.buffer.tb, bytes, view.edit.buffer.tb.getByteSize());
-        const steps = try view.view.replaceSelectedText(bytes);
+        const text = try EditableText.init(self.allocator, view.edit.buffer.tb, bytes, view.edit.buffer.tb.getByteSize());
+        defer text.deinit(self.allocator);
+        const steps = try view.view.replaceSelectedText(text.bytes);
         view.invalidate();
         return steps;
     }
@@ -3565,7 +3612,8 @@ pub const Context = struct {
         defer self.mutating = false;
         const view = try self.getEditorView(handle);
         try view.edit.checkMutable();
-        try validateEditTextBytes(view.edit.buffer.tb, bytes, 0);
+        // The cursor never enters a placeholder, so it follows read-only text: controls take no cells.
+        try validateTextBytes(view.edit.buffer.tb, bytes, 0);
         var offset: usize = 0;
         for (chunks) |chunk| {
             if (chunk.byte_count == 0 or chunk.byte_count > bytes.len - offset or

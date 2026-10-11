@@ -26,8 +26,8 @@ describe("Textarea - Paste Tests", () => {
     currentRenderer.destroy()
   })
 
-  // Native editing rejects C0 controls other than tab, CR, and LF, DEL, and C1, so a paste drops them instead of
-  // losing the whole paste. Input also drops CR and LF.
+  // Native editing drops C0 controls other than tab, CR, and LF, DEL, and C1. Paste also strips escape sequences, and
+  // Input also drops CR and LF. Input maxLength counts only kept characters, so the expected text fills it.
   it.each([
     ["", "x", "x"],
     [" World", "x World", "x World"],
@@ -42,7 +42,7 @@ describe("Textarea - Paste Tests", () => {
     const errors = spyOn(console, "error")
     const editors = [
       [new TextareaRenderable(currentRenderer, { initialValue: "x", width: 40, height: 3 }), textareaText],
-      [new InputRenderable(currentRenderer, { value: "x", width: 40 }), inputText],
+      [new InputRenderable(currentRenderer, { value: "x", maxLength: inputText.length, width: 40 }), inputText],
     ] as const
     try {
       for (const [editor, expected] of editors) {

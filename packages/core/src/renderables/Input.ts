@@ -9,6 +9,9 @@ import {
 export type InputAction = TextareaAction
 export type InputKeyBinding = TextareaKeyBinding
 
+// Input drops C0 controls other than tab, DEL, and C1 itself, so maxLength counts only characters that it keeps.
+const droppedCharacters = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/g
+
 export interface InputRenderableOptions extends Omit<
   TextareaOptions,
   "height" | "minHeight" | "maxHeight" | "initialValue"
@@ -62,7 +65,7 @@ export class InputRenderable extends TextareaRenderable {
     const minLength = options.minLength ?? defaults.minLength
     // Sanitize initial value: strip newlines and enforce maxLength
     const rawValue = options.value ?? defaults.value
-    const initialValue = rawValue.replace(/[\n\r]/g, "").substring(0, maxLength)
+    const initialValue = rawValue.replace(droppedCharacters, "").substring(0, maxLength)
 
     if (minLength > maxLength) {
       throw new Error(`InputRenderable: minLength (${minLength}) cannot be greater than maxLength (${maxLength})`)
@@ -109,7 +112,7 @@ export class InputRenderable extends TextareaRenderable {
    * Insert text - strip newlines and enforce maxLength
    */
   public override insertText(text: string): void {
-    const sanitized = text.replace(/[\n\r]/g, "")
+    const sanitized = text.replace(droppedCharacters, "")
     if (!sanitized) return
 
     const currentLength = this.plainText.length
@@ -128,7 +131,7 @@ export class InputRenderable extends TextareaRenderable {
   }
 
   public set value(value: string) {
-    const newValue = value.substring(0, this._maxLength).replace(/[\n\r]/g, "")
+    const newValue = value.replace(droppedCharacters, "").substring(0, this._maxLength)
     const currentValue = this.plainText
     if (currentValue !== newValue) {
       this.runMutation(() => {
