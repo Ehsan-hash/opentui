@@ -139,8 +139,8 @@ function x10bytes(rawButton: number, x: number, y: number): number[] {
 type Case = [label: string, input: ChunkInput, expected: Snap[]]
 
 // Conformance vectors for the native parser port (issue 044); the JSON file's `format` field defines them.
-// `bun test --todo src/lib/stdin-parser.test.ts` also runs the todo rows: a todo row that passes fails that run,
-// so remove its issue id once the port fixes it.
+// The native parser passes every row; a row with an issue id is a todo for the legacy parser only.
+// `bun test --todo src/lib/stdin-parser.test.ts` also runs the todo rows: a todo row that passes fails that run.
 type ConformanceRow = [name: string, steps: Array<string | number[] | null>, expected: string[], issue?: string]
 const CONFORMANCE = conformance.rows as ConformanceRow[]
 
@@ -2530,7 +2530,7 @@ function defineStdinParserSuite(impl: Implementation): void {
         }
       })
 
-      // The first, second, and fourth rows pin behavior on main that the 044 conformance vectors replace.
+      // The first, second, and fourth rows pin legacy behavior that the 044 conformance vectors replace.
       table([
         // Native: unknown sequences are replies, and Alt applies to every printable byte (issue 046).
         [
@@ -2584,7 +2584,7 @@ function defineStdinParserSuite(impl: Implementation): void {
           expect(runConformance(steps)).toEqual(expected)
           expect(runConformance(bytewise)).toEqual(expected)
         }
-        if (issue) test.todo(`${name} (${issue})`, run)
+        if (issue && !native) test.todo(`${name} (${issue})`, run)
         else test(name, run)
       }
     })
