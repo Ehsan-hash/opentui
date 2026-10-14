@@ -258,8 +258,10 @@ pub const Node = struct {
     text: ?*Text = null,
     editor: ?*Editor = null,
     measure_overridden: bool = false,
-    // The layout epoch of the solve whose custom measurement failed, or zero.
-    measure_failed_solve: u64 = 0,
+    // A custom measurement failed since the last retry pass.
+    measure_failed: bool = false,
+    // The last retry pass measured the node again or kept it at zero.
+    measure_retried: bool = false,
     control: Control = .{ .slider = .{} },
     hook_flags: u32 = 0,
     hook_generation: u64 = 0,
@@ -380,7 +382,7 @@ pub const Scene = struct {
     layout_width: u32 = 0,
     layout_height: u32 = 0,
     preparation_dirty: bool = true,
-    // Some node holds a failed custom measurement that Yoga cached.
+    // Some node failed a custom measurement or ends a retry in the next retry pass.
     measure_failed: bool = false,
     test_prepare_steps: if (builtin.is_test) u64 else void = if (builtin.is_test) 0 else {},
     test_geometry_reads: if (builtin.is_test) u64 else void = if (builtin.is_test) 0 else {},
@@ -1067,19 +1069,27 @@ pub const Scene = struct {
         if (node.owner != self) return error.WrongSession;
         if (self.root != root) return error.InvalidOptions;
         const next_frame = std.math.add(u64, self.last_frame_id, 1) catch return error.RequestLimit;
+        self.retryFailedMeasures();
         try self.solveLayout(cli, root, next_frame, 0);
     }
 
-    /// Runs once per frame attempt, so a provider that always fails is called once
-    /// per frame and never forces another layout round.
+    /// Runs before each frame attempt or measurement-only solve, never between rounds.
+    /// Yoga keeps no failed size. A failed node is measured once more; if that fails too,
+    /// it stays zero until Yoga asks for a new size. A pass without failure ends the retry.
     fn retryFailedMeasures(self: *Scene) void {
         if (!self.measure_failed) return;
         self.measure_failed = false;
         var cursor = self.head;
         while (cursor) |value| : (cursor = value.scene_node.?.next) {
-            if (value.scene_node.?.measure_failed_solve == 0) continue;
-            value.scene_node.?.measure_failed_solve = 0;
-            yoga.yogaNodeInvalidateMeasure(value.yoga_node);
+            const node = value.scene_node.?;
+            if (!node.measure_failed) {
+                node.measure_retried = false;
+                continue;
+            }
+            node.measure_failed = false;
+            if (node.measure_retried) yoga.yogaNodeForgetMeasurements(value.yoga_node) else yoga.yogaNodeInvalidateMeasure(value.yoga_node);
+            node.measure_retried = true;
+            self.measure_failed = true;
         }
     }
 

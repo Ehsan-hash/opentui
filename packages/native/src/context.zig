@@ -469,9 +469,6 @@ const SceneMeasure = struct {
         const node = (self.owner.sceneNode(self.handle) catch unreachable).scene_node.?;
         std.debug.assert(node.handle.generation == self.handle.generation);
         std.debug.assert(self.owner.mutating and !self.owner.scene_measuring);
-        // Yoga can measure a node more than once per solve. Call a failing provider once.
-        const solve = node.owner.layout_epoch + 1;
-        if (node.measure_failed_solve == solve) return .{ .width = 0, .height = 0 };
         self.owner.scene_measuring = true;
         defer self.owner.scene_measuring = false;
         // Host exceptions leave unspecified dimensions and escape after the native
@@ -480,11 +477,12 @@ const SceneMeasure = struct {
         self.callback(self.handle.context_id, self.handle.slot, self.handle.generation, width, width_mode, height, height_mode, &result);
         // Yoga would warn and measure zero for NaN or negative sizes. A size beyond the
         // i32 cell range would fail the whole frame in layout validation. Yoga caches
-        // the zero, so Scene marks the node dirty again before the next solve.
+        // the zero, so Scene.retryFailedMeasures handles the node before the next solve.
         const size: yoga.ExternalYogaSize = .{ .width = cellRangeOrZero(result.width), .height = cellRangeOrZero(result.height) };
-        const failed = size.width != result.width or size.height != result.height;
-        node.measure_failed_solve = if (failed) solve else 0;
-        node.owner.measure_failed = node.owner.measure_failed or failed;
+        if (size.width != result.width or size.height != result.height) {
+            node.measure_failed = true;
+            node.owner.measure_failed = true;
+        }
         return size;
     }
 

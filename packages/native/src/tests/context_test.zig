@@ -369,7 +369,7 @@ test "Context handles distinguish context, kind, stale generation, and limits" {
     try std.testing.expectEqual(@as(usize, 4), @sizeOf(handles.Kind));
 }
 
-test "Context scene measure maps invalid host sizes to zero and measures again next frame" {
+test "Context scene measure maps invalid host sizes to zero without a Yoga warning" {
     const Host = struct {
         var width: f32 = 0;
 
@@ -387,9 +387,9 @@ test "Context scene measure maps invalid host sizes to zero and measures again n
     try owner.sceneMoveNode(node, root, 0);
     try owner.sceneSetMeasure(node, &Host.measure);
     // Like NaN, a size outside the i32 cell range measures zero instead of failing the frame.
-    // Each invalid size leaves the node to be measured again, so no row marks it dirty.
     for ([_]f32{ std.math.inf(f32), 4e9, std.math.nan(f32), -1, 3 }) |width| {
         Host.width = width;
+        try owner.sceneMarkDirty(node);
         const measured = try layout(owner, node);
         try std.testing.expectEqual(@as(f32, if (width == 3) 3 else 0), measured.width);
         try std.testing.expectEqual(@as(f32, 1), measured.height);
