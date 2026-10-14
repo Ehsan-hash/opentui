@@ -507,7 +507,8 @@ typedef struct ot_scene_frame_geometry {
 
 /* One node whose paint hooks a RECORD request asks the host to record, in paint
  * order. hooks holds the RENDER_BEFORE, RENDER_SELF, and RENDER_AFTER bits to
- * record. paint is the prepared geometry native code paints at; clip and opacity
+ * record. paint is the prepared geometry native code paints at, clamped like
+ * OT_LAYOUT_PAINT; clip and opacity
  * are the inherited paint state. flags has OT_SCENE_GEOMETRY_PAINT and, when the
  * public observation succeeded, OT_SCENE_GEOMETRY_PUBLIC. */
 typedef struct ot_scene_paint_slot {
@@ -817,9 +818,9 @@ ot_status ot_scene_get_text_lines(ot_context *, const ot_handle *node, uint32_t 
  * and translations immediately, without running layout. OT_LAYOUT_YOGA instead
  * copies the six actual Yoga computed values, including zero dimensions, and
  * sets screen_x/y to zero. OT_LAYOUT_PAINT copies prepared paint geometry, including
- * screen_x/y. Preparation clamps an axis that leaves the signed 32-bit cell range to
- * its part within 2^29 cells of the origin, at least one cell wide; PUBLIC sizes
- * share that clamp. During a RECORD request, mutations do not change those coordinates.
+ * screen_x/y, with each axis that leaves the signed 32-bit cell range clamped to the
+ * whole cells it paints within 2^22 of the origin, at least one; PUBLIC and YOGA keep
+ * the unclamped values. During a RECORD request, mutations do not change those coordinates.
  * These reads do not run layout. Other selectors reject without changing output. */
 ot_status ot_scene_get_layout(ot_context *, const ot_handle *node, uint32_t observation, ot_scene_layout *out_layout);
 /* Paint a hook-free scene and retain its DONE draft in out_frame. Commit it with

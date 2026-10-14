@@ -302,11 +302,12 @@ describe("Renderable - layout read caching invariants", () => {
 })
 
 describe("Renderable - layout values beyond the cell range", () => {
-  // Issue 202: each value failed every frame. It must paint like the reference values, which fit i32 cells.
+  // Issue 202: each value failed every frame. It must paint like the reference values, which fit i32 cells, both
+  // natively and from a host renderSelf, after a translate-only change (`then`, by default translateX + 1).
   type Values = { [key: string]: unknown; child?: Values }
   const signed = ["left", "top", "right", "bottom", "margin", "translateX", "translateY"]
   const unsigned = ["width", "height", "minWidth", "minHeight", "maxWidth", "flexBasis", "padding", "gap"]
-  const rows: [Values, Values][] = [...signed, ...unsigned].flatMap((key) =>
+  const rows: [Values, Values, Values?][] = [...signed, ...unsigned].flatMap((key) =>
     [2 ** 31 - 1, 2 ** 31, 1e15, 3.4e38].flatMap((value) =>
       (signed.includes(key) ? [1, -1] : [1]).map((sign): [Values, Values] => [
         { [key]: sign * value },
@@ -315,15 +316,21 @@ describe("Renderable - layout values beyond the cell range", () => {
     ),
   )
   rows.push(
-    // A node that crosses the screen from beyond the range keeps covering it.
+    // A node that crosses the screen from beyond the range keeps covering exactly its visible cells.
     [
       { left: -3e9, width: 1e10 },
       { left: -3e8, width: 1e9 },
     ],
     [
-      { translateX: -3e9, width: 1e10 },
-      { translateX: -3e8, width: 1e9 },
+      { translateX: -3e9 + 2, width: 3e9 },
+      { translateX: -1e9 + 2, width: 1e9 },
     ],
+    [
+      { left: -2e9, width: 3e9 },
+      { left: -2e8, width: 3e8 },
+    ],
+    // A node translated beyond the range and back keeps its size.
+    [{ translateX: 2 ** 31 }, { translateX: 1e9 }, { translateX: 0 }],
     // Yoga overflows f32 on these sums.
     [
       { left: 3.4e38, marginLeft: 3.4e38 },
@@ -338,11 +345,16 @@ describe("Renderable - layout values beyond the cell range", () => {
       { width: 1e9, child: { margin: "-100%", flexGrow: 1 } },
     ],
   )
-  const frame = async ({ child, ...values }: Values) => {
+  class HostBox extends BoxRenderable {
+    protected renderSelf(buffer: OptimizedBuffer): void {
+      super.renderSelf(buffer)
+    }
+  }
+  const frame = async (Box: typeof BoxRenderable, { child, ...values }: Values, then?: Values) => {
     const setup = await createTestRenderer({ width: 8, height: 4 })
     const errors: string[] = []
     setup.renderer.on("render:error", (event: { error: Error }) => errors.push(event.error.message))
-    const box = new BoxRenderable(setup.renderer, { position: "absolute", border: true, width: 4, height: 3 })
+    const box = new Box(setup.renderer, { position: "absolute", border: true, width: 4, height: 3 })
     box.add(Object.assign(new TextRenderable(setup.renderer, { content: "a" }), child))
     box.add(new TextRenderable(setup.renderer, { content: "b" }))
     setup.renderer.root.add(box)
@@ -350,15 +362,43 @@ describe("Renderable - layout values beyond the cell range", () => {
     setup.renderer.root.add(ok)
     Object.assign(box, values)
     await setup.renderOnce()
+    Object.assign(box, then ?? { translateX: box.translateX + 1 })
     await setup.renderOnce()
     const result = setup.captureCharFrame()
+    // Public sizes are Yoga's, wherever the node is.
+    const { width, height } = box.getLayout()
+    expect([box.width, box.height]).toEqual([Math.max(width, 1), Math.max(height, 1)])
     setup.renderer.destroy()
     expect(errors).toEqual([])
     return result
   }
 
-  test.each(rows)("%o paints like %o", async (values, reference) => {
-    expect(await frame(values)).toBe(await frame(reference))
+  // A rest parameter keeps the callback's arity at zero, so Bun does not pass `done` for rows without `then`.
+  test.each(rows)("%o paints like %o", async (...[values, reference, then]) => {
+    for (const Box of [BoxRenderable, HostBox]) {
+      expect(await frame(Box, values, then)).toEqual(await frame(Box, reference, then))
+    }
+  })
+
+  test.each([2 ** 31, -(2 ** 31), 3.4e38])("a ScrollBox at translateX %d updates the children it shows", async (x) => {
+    let count = 0
+    class Counted extends BoxRenderable {
+      protected onUpdate(): void {
+        count++
+      }
+    }
+    const updates = async (translateX: number) => {
+      const setup = await createTestRenderer({ width: 8, height: 4 })
+      const scroll = new ScrollBoxRenderable(setup.renderer, { width: 8, height: 4 })
+      for (let i = 0; i < 20; i++) scroll.add(new Counted(setup.renderer, { height: 1 }))
+      setup.renderer.root.add(scroll)
+      scroll.translateX = translateX
+      count = 0
+      await setup.renderOnce()
+      setup.renderer.destroy()
+      return count
+    }
+    expect([await updates(x), await updates(0)]).toEqual([4, 4])
   })
 })
 

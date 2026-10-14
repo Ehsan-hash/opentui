@@ -411,6 +411,27 @@ test "Scene selected text copies exact bytes without allocating" {
     try testing.expect(!failing.has_induced_failure);
 }
 
+test "Scene cell layout keeps in-range axes and the truncated visible cells of the rest" {
+    const inf = std.math.inf(f64);
+    const nan = std.math.nan(f64);
+    // start, size -> clamped start, size. Paint covers trunc(start) .. trunc(start) + trunc(size).
+    for ([_][4]f64{
+        .{ -2147483648, 2147483520, -2147483648, 2147483520 },
+        .{ 2.5, 3.75, 2.5, 3.75 },
+        .{ -3e9 + 2.5, 3e9, -4194304, 4194307 },
+        .{ -2e9, 3e9, -4194304, 8388608 },
+        .{ 1e9, 2e9, 4194303, 1 },
+        .{ -3e9, 1e10, -4194304, 8388608 },
+        .{ nan, 4, -4194304, 1 },
+        .{ 5, nan, 5, 1 },
+        .{ -inf, inf, -4194304, 1 },
+        .{ 3, inf, 3, 4194301 },
+    }) |row| {
+        const cells = scene.cellLayout(.{ .screenX = row[0], .width = @floatCast(row[1]) });
+        try testing.expectEqual([2]f64{ row[2], row[3] }, [2]f64{ cells.screenX, cells.width });
+    }
+}
+
 test "Scene text fully clipped coordinates never enter signed drawing arithmetic" {
     const f = try Fixture.init(testing.allocator, 4, 2, .{});
     defer f.deinit();
