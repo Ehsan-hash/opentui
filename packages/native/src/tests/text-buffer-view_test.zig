@@ -4689,8 +4689,8 @@ test "TextBufferView edited text wraps like freshly loaded text" {
     var pools = TestPools.init(std.testing.allocator);
     defer pools.deinit();
     const tokens = [_][]const u8{
-        "a", "b",        " ",                  "\t", "\n",       "\u{65e5}", "e\u{301}", "\u{1f44d}\u{1f3fd}", "\u{1f468}\u{200d}\u{1f469}",
-        "-", "\u{200b}", "\u{1f1fa}\u{1f1f8}", "x",  "\u{ac00}", "\u{301}",  "\u{304b}", "\r\n",
+        "a", "b",                " ",                  "\t", "\n",       "\u{65e5}", "e\u{301}", "\u{1f44d}\u{1f3fd}", "\u{1f468}\u{200d}\u{1f469}",
+        "-", "\u{200b}\u{200e}", "\u{1f1fa}\u{1f1f8}", "x",  "\u{ac00}", "\u{301}",  "\u{304b}", "\r\n",
     };
     const methods = std.enums.values(@import("../utf8.zig").WidthMethod);
     var prng = std.Random.DefaultPrng.init(0x0508);
