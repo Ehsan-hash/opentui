@@ -1437,11 +1437,10 @@ pub const Scene = struct {
         if (node.control.editor.mouse_pointer < std.meta.tags(@import("terminal.zig").MousePointerStyle).len) cli.terminal.setMousePointerStyle(@enumFromInt(node.control.editor.mouse_pointer));
         if (!node.control.editor.show_cursor) return;
         const cursor = editor.view.getVisualCursor();
-        const cursor_x = @max(1, layout.screenX + @as(f64, @floatFromInt(cursor.visual_col)) + 1);
-        const cursor_y = @max(1, layout.screenY + @as(f64, @floatFromInt(cursor.visual_row)) + 1);
         // Terminal keeps zero-based row/column in u16 alongside its public position.
         const position_max = @as(f64, std.math.maxInt(u16)) + 1;
-        if (cursor_x > position_max or cursor_y > position_max) return error.InvalidDimensions;
+        const cursor_x = std.math.clamp(layout.screenX + @as(f64, @floatFromInt(cursor.visual_col)) + 1, 1, position_max);
+        const cursor_y = std.math.clamp(layout.screenY + @as(f64, @floatFromInt(cursor.visual_row)) + 1, 1, position_max);
         const style: @import("terminal.zig").CursorStyle = switch (node.control.editor.style) {
             0 => .block,
             1 => .line,

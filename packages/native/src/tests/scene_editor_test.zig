@@ -79,18 +79,17 @@ test "Scene editor sets the mouse pointer only when its options select one" {
     try testing.expectEqual(.zoom_out, terminal.getMousePointer());
 }
 
-test "Scene editor rejects cursor coordinates beyond terminal storage" {
+test "Scene editor clamps cursor coordinates to terminal storage" {
     const owner = try context.Context.init(testing.allocator, testing.io, .{});
     defer owner.deinit() catch unreachable;
     const fixture = try setup(owner, 4, 2);
     try owner.sceneSetFocus(fixture.node, true);
-    try repaint(owner, fixture.session, background, true, 0);
-    try owner.sceneSetPaint(fixture.node, .{ .translateX = 65536 });
-    try testing.expectError(error.InvalidDimensions, repaint(owner, fixture.session, background, true, 0));
-    try testing.expect(!(try owner.sceneGetCursorState(fixture.session)).visible);
-    try owner.sceneSetPaint(fixture.node, .{ .translateX = 65535 });
-    try repaint(owner, fixture.session, background, true, 0);
-    try testing.expectEqual(@as(u32, 65536), (try owner.sceneGetCursorState(fixture.session)).x);
+    for ([_]f64{ 65535, 65536, 1e9 }) |translate| {
+        try owner.sceneSetPaint(fixture.node, .{ .translateX = translate, .translateY = translate });
+        try repaint(owner, fixture.session, background, true, 0);
+        const cursor = try owner.sceneGetCursorState(fixture.session);
+        try testing.expectEqual([2]u32{ 65536, 65536 }, [2]u32{ cursor.x, cursor.y });
+    }
 }
 
 test "Scene editor checked preparation reports allocation failure and retries without a stale cursor" {
