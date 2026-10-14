@@ -653,7 +653,9 @@ ot_status ot_scene_has_measure(ot_context *, const ot_handle *node, uint32_t *ou
 ot_status ot_scene_mark_dirty(ot_context *, const ot_handle *node);
 /* Use OT_STYLE_* groups/kinds, OT_EDGE_* (or OT_GUTTER_* for GAP), and OT_UNIT_*.
  * Only OT_STYLE_DIMENSION accepts OT_STYLE_DISABLE_FLEX_SHRINK, which disables
- * flex shrink atomically with the dimension update. Other flags must be zero. */
+ * flex shrink atomically with the dimension update. Other flags must be zero.
+ * MARGIN, PADDING, POSITION, and GAP values beyond ±1e30 are stored as ±1e30, so
+ * get_style reads the stored value; Yoga clamps resolved percentages the same way. */
 ot_status ot_scene_set_style(ot_context *, const ot_handle *node, uint32_t group,
     uint32_t kind, uint32_t edge, uint32_t unit, float value, uint32_t flags);
 ot_status ot_scene_get_style(ot_context *, const ot_handle *node, uint32_t group,

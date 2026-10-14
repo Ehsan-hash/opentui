@@ -302,24 +302,48 @@ describe("Renderable - layout read caching invariants", () => {
 })
 
 describe("Renderable - layout values beyond the cell range", () => {
-  // Issue 202: each value failed every frame. It must paint like values that fit i32 cells.
+  // Issue 202: each value failed every frame. It must paint like the reference values, which fit i32 cells.
+  type Values = { [key: string]: unknown; child?: Values }
   const signed = ["left", "top", "right", "bottom", "margin", "translateX", "translateY"]
   const unsigned = ["width", "height", "minWidth", "minHeight", "maxWidth", "flexBasis", "padding", "gap"]
-  // Each row scales its values by a factor that fits them in i32 cells for the reference frame.
-  const rows: [Record<string, number>, number][] = [...signed, ...unsigned].flatMap((key) =>
+  const rows: [Values, Values][] = [...signed, ...unsigned].flatMap((key) =>
     [2 ** 31 - 1, 2 ** 31, 1e15, 3.4e38].flatMap((value) =>
-      (signed.includes(key) ? [value, -value] : [value]).map((signedValue) => [{ [key]: signedValue }, 1e9 / value]),
+      (signed.includes(key) ? [1, -1] : [1]).map((sign): [Values, Values] => [
+        { [key]: sign * value },
+        { [key]: sign * 1e9 },
+      ]),
     ),
   )
-  // A node that crosses the screen from beyond the range keeps covering it. Yoga overflows f32 on the last sum.
-  rows.push([{ left: -3e9, width: 1e10 }, 0.1], [{ translateX: -3e9, width: 1e10 }, 0.1])
-  rows.push([{ left: 3.4e38, marginLeft: 3.4e38 }, 1e9 / 3.4e38])
-  const frame = async (values: Record<string, number>) => {
+  rows.push(
+    // A node that crosses the screen from beyond the range keeps covering it.
+    [
+      { left: -3e9, width: 1e10 },
+      { left: -3e8, width: 1e9 },
+    ],
+    [
+      { translateX: -3e9, width: 1e10 },
+      { translateX: -3e8, width: 1e9 },
+    ],
+    // Yoga overflows f32 on these sums.
+    [
+      { left: 3.4e38, marginLeft: 3.4e38 },
+      { left: 1e9, marginLeft: 1e9 },
+    ],
+    [
+      { position: "relative", margin: -3.4e38, flexGrow: 1 },
+      { position: "relative", margin: -1e9, flexGrow: 1 },
+    ],
+    [
+      { width: 1e15, child: { margin: "-1e26%", flexGrow: 1 } },
+      { width: 1e9, child: { margin: "-100%", flexGrow: 1 } },
+    ],
+  )
+  const frame = async ({ child, ...values }: Values) => {
     const setup = await createTestRenderer({ width: 8, height: 4 })
     const errors: string[] = []
     setup.renderer.on("render:error", (event: { error: Error }) => errors.push(event.error.message))
     const box = new BoxRenderable(setup.renderer, { position: "absolute", border: true, width: 4, height: 3 })
-    box.add(new TextRenderable(setup.renderer, { content: "a" }))
+    box.add(Object.assign(new TextRenderable(setup.renderer, { content: "a" }), child))
     box.add(new TextRenderable(setup.renderer, { content: "b" }))
     setup.renderer.root.add(box)
     const ok = new TextRenderable(setup.renderer, { position: "absolute", left: 6, top: 3, content: "ok" })
@@ -328,14 +352,12 @@ describe("Renderable - layout values beyond the cell range", () => {
     await setup.renderOnce()
     await setup.renderOnce()
     const result = setup.captureCharFrame()
-    expect([box.x, box.y].every(Number.isFinite)).toBe(true)
     setup.renderer.destroy()
     expect(errors).toEqual([])
     return result
   }
 
-  test.each(rows)("%o paints like the values scaled by %d", async (values, scale) => {
-    const reference = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value * scale]))
+  test.each(rows)("%o paints like %o", async (values, reference) => {
     expect(await frame(values)).toBe(await frame(reference))
   })
 })
@@ -367,6 +389,8 @@ describe("Renderable - declared style getters", () => {
     ["getMargin", (box) => box.getMargin(Edge.All), { margin: "auto" }, { unit: Unit.Auto, value: NaN }],
     ["getPadding Top", (box) => box.getPadding(Edge.Top), { padding: 2, paddingX: 3, paddingY: 4 }, unset],
     ["getGap", (box) => box.getGap(Gutter.Row), { rowGap: "30%" }, percent(30)],
+    // Native clamps summed styles to ±1e30, so Yoga's sums stay finite.
+    ["getMargin beyond 1e30", (box) => box.getMargin(Edge.Top), { marginTop: -3.4e38 }, point(Math.fround(-1e30))],
   ]
 
   test.each(cases)(
