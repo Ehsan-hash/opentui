@@ -593,8 +593,8 @@ pub const Scene = struct {
         if (fields & api.OT_SCENE_PROPERTY_BORDER_COLOR != 0) try buffer.validateColor(patch.borderColor);
         if (fields & api.OT_SCENE_PROPERTY_FOCUSED_BORDER_COLOR != 0) try buffer.validateColor(patch.focusedBorderColor);
         if ((fields & api.OT_SCENE_PROPERTY_OPACITY != 0 and (!std.math.isFinite(patch.opacity) or patch.opacity < 0 or patch.opacity > 1)) or
-            (fields & api.OT_SCENE_PROPERTY_TRANSLATE_X != 0 and !std.math.isFinite(patch.translateX)) or
-            (fields & api.OT_SCENE_PROPERTY_TRANSLATE_Y != 0 and !std.math.isFinite(patch.translateY)) or
+            (fields & api.OT_SCENE_PROPERTY_TRANSLATE_X != 0 and !(@abs(patch.translateX) <= std.math.floatMax(f32))) or
+            (fields & api.OT_SCENE_PROPERTY_TRANSLATE_Y != 0 and !(@abs(patch.translateY) <= std.math.floatMax(f32))) or
             (fields & api.OT_SCENE_PROPERTY_BORDER != 0 and patch.borderSides > api.OT_BORDER_ALL) or
             (fields & api.OT_SCENE_PROPERTY_SHOULD_FILL != 0 and patch.shouldFill > 1) or
             (fields & api.OT_SCENE_PROPERTY_BORDER_STYLE != 0 and patch.borderStyle > api.OT_BORDER_HEAVY))
@@ -910,7 +910,6 @@ pub const Scene = struct {
                                 var layout = state.layout;
                                 layout.screenX = parent_layout.screenX + @as(f64, layout.left) + state.paint.translateX;
                                 layout.screenY = parent_layout.screenY + @as(f64, layout.top) + state.paint.translateY;
-                                try validateLayout(layout);
                                 if (!overlaps(bounds, layout)) continue;
                             }
                             self.feedback.appendAssumeCapacity(.{ .node = state.handle, .kind = .update });
@@ -1297,7 +1296,6 @@ pub const Scene = struct {
         for (self.paint_members.items) |member| {
             const value = owner.objects.get(member.node, .native_renderable, native.NativeRenderable) catch continue;
             std.debug.assert(value.scene_node.?.owner == self);
-            try validateLayout(member.layout);
             const entry: Work = .{ .node = value, .layout = member.layout, .clip = member.clip, .opacity = member.opacity, .visible = true, .filtered = member.filtered or refresh_views };
             const phases: Phases = if (member.slot == no_slot) .{} else .{
                 .recording = bytes,
@@ -1515,8 +1513,7 @@ pub const Scene = struct {
     fn childFilter(self: *Scene, objects: *const handles.Table, value: *native.NativeRenderable) !?Filter {
         const node = value.scene_node.?;
         const viewport = try self.viewportNode(objects, node.viewport orelse return null);
-        const layout = try composedLayout(viewport, false);
-        try validateLayout(layout);
+        const layout = cellLayout(try composedLayout(viewport, false));
         // The cutoff includes hidden children and changes selection, not refresh ordering.
         if (node.children.items.len < 16 and layout.width > 0 and layout.height > 0) return null;
         var direction: u32 = 0;
@@ -1565,14 +1562,14 @@ pub const Scene = struct {
                     var computed: yoga.ExternalYogaLayout = undefined;
                     if (builtin.is_test) self.test_geometry_reads += 1;
                     try yoga.check(yoga.yogaNodeGetComputedLayoutChecked(value.yoga_node, &computed));
-                    if (!std.math.isFinite(computed.width) or !std.math.isFinite(computed.height)) return error.InvalidDimensions;
+                    // Yoga reports f32 overflow as infinity or NaN: keep edges finite and a NaN size unbounded.
                     layout = .{
-                        .left = computed.left,
-                        .top = computed.top,
-                        .right = computed.right,
-                        .bottom = computed.bottom,
-                        .width = @max(computed.width, 1),
-                        .height = @max(computed.height, 1),
+                        .left = finite(computed.left),
+                        .top = finite(computed.top),
+                        .right = finite(computed.right),
+                        .bottom = finite(computed.bottom),
+                        .width = if (std.math.isNan(computed.width)) std.math.floatMax(f32) else @max(computed.width, 1),
+                        .height = if (std.math.isNan(computed.height)) std.math.floatMax(f32) else @max(computed.height, 1),
                     };
                 } else if (mode == .paint) {
                     // Final paint follows settled preparation, but transforms remain live.
@@ -1583,19 +1580,19 @@ pub const Scene = struct {
                 std.debug.assert(layout.width >= 1 and layout.height >= 1);
                 layout.screenX = frame.parent.screenX + @as(f64, layout.left) + node.paint.translateX;
                 layout.screenY = frame.parent.screenY + @as(f64, layout.top) + node.paint.translateY;
-                try validateLayout(layout);
+                const cells = cellLayout(layout);
                 if (frame.filter) |filter| {
                     if (!overlaps(filter, layout)) {
                         depth -= 1;
                         continue;
                     }
                 }
-                if (node.kind == api.OT_SCENE_SLIDER) _ = try sliderThumb(node.control.slider, layout.width, layout.height);
+                if (node.kind == api.OT_SCENE_SLIDER) _ = try sliderThumb(node.control.slider, cells.width, cells.height);
                 frame.opacity *= node.paint.opacity;
                 if (retained) {
-                    self.prepared.appendAssumeCapacity(.{ .node = node.handle, .layout = layout, .clip = frame.clip, .opacity = frame.opacity, .visible = visible, .filtered = frame.filtered });
+                    self.prepared.appendAssumeCapacity(.{ .node = node.handle, .layout = cells, .clip = frame.clip, .opacity = frame.opacity, .visible = visible, .filtered = frame.filtered });
                 } else {
-                    self.work.appendAssumeCapacity(.{ .node = value, .layout = layout, .clip = frame.clip, .opacity = frame.opacity, .visible = visible, .filtered = frame.filtered });
+                    self.work.appendAssumeCapacity(.{ .node = value, .layout = cells, .clip = frame.clip, .opacity = frame.opacity, .visible = visible, .filtered = frame.filtered });
                 }
                 if (node.viewport) |handle| _ = try self.viewportNode(objects, handle);
                 if (!visible or (node.paint_children.items.len == 0 and node.viewport == null)) {
@@ -1615,10 +1612,10 @@ pub const Scene = struct {
                     const horizontal = left + @as(u32, @intFromBool(node.paint.borderSides & api.OT_BORDER_RIGHT != 0));
                     const vertical = top + @as(u32, @intFromBool(node.paint.borderSides & api.OT_BORDER_BOTTOM != 0));
                     frame.clip = intersection(frame.clip, .{
-                        .x = @intFromFloat(layout.screenX + @as(f64, @floatFromInt(left))),
-                        .y = @intFromFloat(layout.screenY + @as(f64, @floatFromInt(top))),
-                        .width = @as(u32, @intFromFloat(layout.width)) -| horizontal,
-                        .height = @as(u32, @intFromFloat(layout.height)) -| vertical,
+                        .x = @intFromFloat(cells.screenX + @as(f64, @floatFromInt(left))),
+                        .y = @intFromFloat(cells.screenY + @as(f64, @floatFromInt(top))),
+                        .width = @as(u32, @intFromFloat(cells.width)) -| horizontal,
+                        .height = @as(u32, @intFromFloat(cells.height)) -| vertical,
                     });
                 }
                 if (mode == .paint) frame.filter = try self.childFilter(objects, value);
@@ -1727,9 +1724,7 @@ pub fn getLayout(value: *const native.NativeRenderable) !Layout {
 }
 
 pub fn getPaintLayout(value: *const native.NativeRenderable) !Layout {
-    const layout = value.scene_node.?.layout;
-    try validateLayout(layout);
-    return layout;
+    return value.scene_node.?.layout;
 }
 
 fn composedLayout(value: *const native.NativeRenderable, comptime observed: bool) !Layout {
@@ -1750,7 +1745,8 @@ fn composedLayout(value: *const native.NativeRenderable, comptime observed: bool
         const layout = if (observed) node.observed_layout else node.layout;
         result.screenX = result.screenX + @as(f64, layout.left) + node.paint.translateX;
         result.screenY = result.screenY + @as(f64, layout.top) + node.paint.translateY;
-        if (!std.math.isFinite(result.screenX) or !std.math.isFinite(result.screenY)) return error.InvalidDimensions;
+        // Finite f32 edges and translations cannot overflow f64 at Yoga depth.
+        std.debug.assert(std.math.isFinite(result.screenX) and std.math.isFinite(result.screenY));
     }
     return result;
 }
@@ -1833,17 +1829,25 @@ fn placementGreaterThan(_: void, left: Feedback, right: Feedback) bool {
     return left.placement > right.placement;
 }
 
-fn validateLayout(layout: Layout) !void {
-    const min: f64 = std.math.minInt(i32);
-    const max: f64 = std.math.maxInt(i32);
-    inline for (std.meta.fields(Layout)) |field| {
-        if (!std.math.isFinite(@field(layout, field.name))) return error.InvalidDimensions;
-    }
-    if (layout.screenX < min or layout.screenY < min or layout.width > max or layout.height > max or
-        layout.screenX + @as(f64, layout.width) > max or layout.screenY + @as(f64, layout.height) > max)
-    {
-        return error.InvalidDimensions;
-    }
+/// Paint, clip, and hit geometry use i32 cells. An axis outside them keeps only its part within
+/// 2^29 cells of the origin, at least one cell wide, so no node moves onto a terminal.
+fn cellLayout(layout: Layout) Layout {
+    var cells = layout;
+    cellAxis(&cells.screenX, &cells.width);
+    cellAxis(&cells.screenY, &cells.height);
+    return cells;
+}
+
+fn finite(value: f32) f32 {
+    return @min(@max(value, -std.math.floatMax(f32)), std.math.floatMax(f32));
+}
+
+fn cellAxis(start: *f64, size: *f32) void {
+    const end = start.* + size.*;
+    if (start.* >= std.math.minInt(i32) and end <= std.math.maxInt(i32) and @as(f64, size.*) <= std.math.maxInt(i32)) return;
+    const bound: f64 = 1 << 29;
+    start.* = @min(@max(start.*, -bound), bound - 1);
+    size.* = @floatCast(@min(@max(end, start.* + 1), bound) - start.*);
 }
 
 fn intersection(a: buffer.ClipRect, b: buffer.ClipRect) buffer.ClipRect {

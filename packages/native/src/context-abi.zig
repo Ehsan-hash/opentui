@@ -4041,16 +4041,15 @@ test "Scene ABI records preserve rejected outputs and read real Session metadata
     try std.testing.expectEqual(@as(u32, 2), cursor.style);
     try std.testing.expectEqual(@as(u32, 0), cursor.blinking);
     try std.testing.expectEqual(@as(u32, 0), cursor.reserved);
-    const layout_before_overflow = layout;
-    try owner.core.sceneSetPaint(handleFromC(root), .{ .translateX = std.math.floatMax(f64) });
-    try owner.core.sceneSetPaint(handleFromC(box), .{ .translateX = std.math.floatMax(f64) });
-    try std.testing.expectEqual(c.OT_INVALID_ARGUMENT, ot_scene_get_layout(handle, &box, 0, &layout));
-    try std.testing.expectEqualDeep(layout_before_overflow, layout);
+    try std.testing.expectError(error.InvalidOptions, owner.core.sceneSetPaint(handleFromC(box), .{ .translateX = std.math.floatMax(f64) }));
     try std.testing.expectEqual(c.OT_OK, ot_scene_get_layout(handle, &box, 1, &layout));
     try std.testing.expectEqual(@as(f64, 0), layout.screen_x);
     try owner.core.cancelSession(session);
     try std.testing.expectEqual(c.OT_OK, ot_scene_destroy_node(handle, &root));
     try std.testing.expectEqual(c.OT_OK, ot_scene_destroy_node(handle, &box));
+    const layout_before_stale = layout;
+    try std.testing.expectEqual(c.OT_STALE_HANDLE, ot_scene_get_layout(handle, &box, 0, &layout));
+    try std.testing.expectEqualDeep(layout_before_stale, layout);
 }
 
 test "Scene ABI paint layout preserves prepared coordinates through reparenting and translation" {

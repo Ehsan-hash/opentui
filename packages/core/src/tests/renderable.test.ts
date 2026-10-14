@@ -301,6 +301,45 @@ describe("Renderable - layout read caching invariants", () => {
   })
 })
 
+describe("Renderable - layout values beyond the cell range", () => {
+  // Issue 202: each value failed every frame. It must paint like values that fit i32 cells.
+  const signed = ["left", "top", "right", "bottom", "margin", "translateX", "translateY"]
+  const unsigned = ["width", "height", "minWidth", "minHeight", "maxWidth", "flexBasis", "padding", "gap"]
+  // Each row scales its values by a factor that fits them in i32 cells for the reference frame.
+  const rows: [Record<string, number>, number][] = [...signed, ...unsigned].flatMap((key) =>
+    [2 ** 31 - 1, 2 ** 31, 1e15, 3.4e38].flatMap((value) =>
+      (signed.includes(key) ? [value, -value] : [value]).map((signedValue) => [{ [key]: signedValue }, 1e9 / value]),
+    ),
+  )
+  // A node that crosses the screen from beyond the range keeps covering it. Yoga overflows f32 on the last sum.
+  rows.push([{ left: -3e9, width: 1e10 }, 0.1], [{ translateX: -3e9, width: 1e10 }, 0.1])
+  rows.push([{ left: 3.4e38, marginLeft: 3.4e38 }, 1e9 / 3.4e38])
+  const frame = async (values: Record<string, number>) => {
+    const setup = await createTestRenderer({ width: 8, height: 4 })
+    const errors: string[] = []
+    setup.renderer.on("render:error", (event: { error: Error }) => errors.push(event.error.message))
+    const box = new BoxRenderable(setup.renderer, { position: "absolute", border: true, width: 4, height: 3 })
+    box.add(new TextRenderable(setup.renderer, { content: "a" }))
+    box.add(new TextRenderable(setup.renderer, { content: "b" }))
+    setup.renderer.root.add(box)
+    const ok = new TextRenderable(setup.renderer, { position: "absolute", left: 6, top: 3, content: "ok" })
+    setup.renderer.root.add(ok)
+    Object.assign(box, values)
+    await setup.renderOnce()
+    await setup.renderOnce()
+    const result = setup.captureCharFrame()
+    expect([box.x, box.y].every(Number.isFinite)).toBe(true)
+    setup.renderer.destroy()
+    expect(errors).toEqual([])
+    return result
+  }
+
+  test.each(rows)("%o paints like the values scaled by %d", async (values, scale) => {
+    const reference = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value * scale]))
+    expect(await frame(values)).toBe(await frame(reference))
+  })
+})
+
 describe("Renderable - declared style getters", () => {
   const point = (value: number) => ({ unit: Unit.Point, value })
   const percent = (value: number) => ({ unit: Unit.Percent, value })

@@ -661,6 +661,7 @@ ot_status ot_scene_get_style(ot_context *, const ot_handle *node, uint32_t group
 /* Exact size/version and zero reserved. Borders use L=1 B=2 R=4 T=8;
  * styles are single=0 double=1 rounded=2 heavy=3. Colors retain terminal color intent.
  * focusable is 0 or 1. New nodes default to 0 and focused color {0,170,255,255}.
+ * Translations must be finite with a magnitude of at most FLT_MAX.
  * Border layout widths and paint properties publish together on acceptance. */
 ot_status ot_scene_set_paint(ot_context *, const ot_handle *node, const ot_scene_paint_options *);
 /* --- Staged scene properties ---
@@ -814,7 +815,9 @@ ot_status ot_scene_get_text_lines(ot_context *, const ot_handle *node, uint32_t 
  * and translations immediately, without running layout. OT_LAYOUT_YOGA instead
  * copies the six actual Yoga computed values, including zero dimensions, and
  * sets screen_x/y to zero. OT_LAYOUT_PAINT copies prepared paint geometry, including
- * screen_x/y. During a RECORD request, mutations do not change those coordinates.
+ * screen_x/y. Preparation clamps an axis that leaves the signed 32-bit cell range to
+ * its part within 2^29 cells of the origin, at least one cell wide; PUBLIC sizes
+ * share that clamp. During a RECORD request, mutations do not change those coordinates.
  * These reads do not run layout. Other selectors reject without changing output. */
 ot_status ot_scene_get_layout(ot_context *, const ot_handle *node, uint32_t observation, ot_scene_layout *out_layout);
 /* Paint a hook-free scene and retain its DONE draft in out_frame. Commit it with
