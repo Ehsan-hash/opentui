@@ -335,6 +335,10 @@ describe("Renderable - layout values beyond the cell range", () => {
     [{ translateX: 2 ** 31 }, { translateX: 1e9 }, { translateX: 0 }],
     // Yoga overflows f32 on these sums.
     [
+      { width: "auto", left: -3.4e38, right: -3.4e38 },
+      { width: "auto", left: -1e9, right: -1e9 },
+    ],
+    [
       { left: 3.4e38, marginLeft: 3.4e38 },
       { left: 1e9, marginLeft: 1e9 },
     ],

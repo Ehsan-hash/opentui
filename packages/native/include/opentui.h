@@ -236,7 +236,8 @@ typedef struct ot_handle {
 
 /* Complete slider options. orientation is horizontal=0 or vertical=1. Colors
  * retain terminal color intent. All numbers and derived thumb arithmetic must be finite.
- * Values are not clamped: zero and inverted ranges retain the legacy full thumb.
+ * Values are not clamped: zero and inverted ranges retain the legacy full thumb. A track
+ * longer than the i32 cell range uses that range.
  * reserved must be zero. New sliders default to horizontal, min=0, max=100,
  * value=0, viewport_size=10, foreground=#9a9ea3, background=#252527 (both opaque). */
 typedef struct ot_scene_slider_options {
@@ -655,7 +656,7 @@ ot_status ot_scene_mark_dirty(ot_context *, const ot_handle *node);
 /* Use OT_STYLE_* groups/kinds, OT_EDGE_* (or OT_GUTTER_* for GAP), and OT_UNIT_*.
  * Only OT_STYLE_DIMENSION accepts OT_STYLE_DISABLE_FLEX_SHRINK, which disables
  * flex shrink atomically with the dimension update. Other flags must be zero.
- * MARGIN, PADDING, POSITION, and GAP values beyond ±1e30 are stored as ±1e30, so
+ * Finite MARGIN, PADDING, POSITION, and GAP values beyond ±1e30 are stored as ±1e30, so
  * get_style reads the stored value; Yoga clamps resolved percentages the same way. */
 ot_status ot_scene_set_style(ot_context *, const ot_handle *node, uint32_t group,
     uint32_t kind, uint32_t edge, uint32_t unit, float value, uint32_t flags);

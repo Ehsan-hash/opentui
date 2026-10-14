@@ -931,6 +931,8 @@ test "Yoga finite-percent patch keeps a deep percent chain and its margins finit
     var layout: yoga.ExternalYogaLayout = undefined;
     yoga.yogaNodeGetComputedLayout(leaf, &layout);
     try std.testing.expectEqual(@as(f32, -1e30), layout.left);
+    yoga.yogaNodeGetComputedLayout(nodes[nodes.len - 2], &layout);
+    try std.testing.expectEqual(@as(f32, 1e30), layout.width);
     try std.testing.expect(std.math.isFinite(layout.top));
 }
 

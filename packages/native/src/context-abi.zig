@@ -3982,6 +3982,8 @@ test "Scene ABI records preserve rejected outputs and read real Session metadata
     try std.testing.expectEqual(c.OT_OK, ot_scene_create_node(handle, &session_c, 1, 2, &box));
     try std.testing.expectEqual(c.OT_OK, ot_scene_set_style(handle, &box, 4, 0, 0, 1, 3, 1));
     try std.testing.expectEqual(c.OT_OK, ot_scene_set_style(handle, &box, 4, 1, 0, 1, 1, 1));
+    // Only finite summed styles saturate at ±1e30; infinity still rejects.
+    try std.testing.expectEqual(c.OT_INVALID_ARGUMENT, ot_scene_set_style(handle, &box, 2, 7, 8, 1, -std.math.inf(f32), 0));
     try std.testing.expectEqual(c.OT_OK, ot_scene_move_node(handle, &box, &root, 0));
     var layout: c.ot_scene_layout = std.mem.zeroes(c.ot_scene_layout);
     layout.struct_size = @sizeOf(c.ot_scene_layout);
