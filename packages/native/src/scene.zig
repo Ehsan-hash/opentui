@@ -1423,10 +1423,11 @@ pub const Scene = struct {
         }
         const x = (if (state.buffer != null) @as(f64, 0) else layout.screenX) + @floor((layout.width - width) / 2);
         const y = (if (state.buffer != null) @as(f64, 0) else layout.screenY) + @floor((layout.height - height) / 2);
-        const pixel_width = if (has_resolution) @max(1, @round(width * cell_width)) else 0;
-        const pixel_height = if (has_resolution) @max(1, @round(height * cell_height)) else 0;
-        if (x < std.math.minInt(i32) or x > std.math.maxInt(i32) or y < std.math.minInt(i32) or y > std.math.maxInt(i32) or
-            pixel_width > std.math.maxInt(u32) or pixel_height > std.math.maxInt(u32)) return error.InvalidDimensions;
+        // Pixel sizes saturate like cell geometry; the terminal only shows the visible part.
+        const pixel_width = if (has_resolution) std.math.clamp(@round(width * cell_width), 1, std.math.maxInt(u32)) else 0;
+        const pixel_height = if (has_resolution) std.math.clamp(@round(height * cell_height), 1, std.math.maxInt(u32)) else 0;
+        // Paint geometry fits i32 cells, and the image stays within its node.
+        std.debug.assert(x >= std.math.minInt(i32) and x <= std.math.maxInt(i32) and y >= std.math.minInt(i32) and y <= std.math.maxInt(i32));
         const target = state.buffer orelse cli.getNextBuffer();
         _ = try target.drawImage(source, source.render_id, @intFromFloat(x), @intFromFloat(y), @intFromFloat(width), @intFromFloat(height), @intFromFloat(pixel_width), @intFromFloat(pixel_height), source_x, source_y, source_width, source_height, state.protocol);
     }
