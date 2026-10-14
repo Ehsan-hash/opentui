@@ -2641,7 +2641,8 @@ test "calculateTextWidth: each default-ignorable code point takes the cells Ghos
     defer stream.deinit();
     var bytes: [5]u8 = .{ 'a', 0, 0, 0, 0 };
     for (0..0x110000) |cp| {
-        if (!uucode.get(.is_default_ignorable, @intCast(cp))) continue;
+        // Ghostty gives the conjoining jamo fillers no cell; OpenTUI keeps their widths (see the drawing test).
+        if (!uucode.get(.is_default_ignorable, @intCast(cp)) or cp == 0x115f or cp == 0x1160) continue;
         const len = 1 + try std.unicode.utf8Encode(@intCast(cp), bytes[1..]);
         stream.nextSlice("\r\x1b[2K");
         stream.nextSlice(bytes[0..len]);
