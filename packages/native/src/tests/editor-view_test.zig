@@ -2339,4 +2339,43 @@ test "EditorView - cursor moves and backspace step over zero-width clusters" {
             }
         }
     }
+    // A line without cells still holds bytes: Delete, Backspace, and deleting the whole text remove them.
+    const zero_width_lines = [_][]const u8{ "\u{200b}", "\u{200b}\nb", "a\n\u{200b}", "a\n\u{2060}\u{301}\nb", "\u{200d}\u{2060}" };
+    for (std.enums.values(utf8.WidthMethod)) |width_method| {
+        for (zero_width_lines) |text| {
+            for ([_]enum { delete, backspace, all }{ .delete, .backspace, .all }) |key| {
+                errdefer std.debug.print("width_method={t} text={any} key={t}\n", .{ width_method, text, key });
+                const eb = try EditBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, width_method, null);
+                defer eb.deinit();
+                try eb.setText(text);
+                const last = eb.getTextBuffer().lineCount() - 1;
+                const text_end: Cursor = .{ .row = last, .col = eb.getTextBuffer().lineWidthAt(last) };
+                if (key == .backspace) try eb.setCursor(text_end.row, text_end.col);
+                var out: [32]u8 = undefined;
+                var bytes = text.len;
+                var steps: u32 = 0;
+                while (bytes > 0) : (bytes = eb.getText(&out)) {
+                    switch (key) {
+                        .delete => try eb.deleteForward(),
+                        .backspace => try eb.backspace(),
+                        .all => try eb.deleteRange(.{ .row = 0, .col = 0 }, text_end),
+                    }
+                    try std.testing.expect(eb.getText(&out) < if (key == .all) 1 else bytes);
+                    steps += 1;
+                }
+                while (steps > 0) : (steps -= 1) _ = try eb.undo();
+                try std.testing.expectEqualStrings(text, out[0..eb.getText(&out)]);
+            }
+        }
+    }
+    // Deleting a line keeps the zero-width text that starts the next one.
+    const eb = try EditBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, .unicode, null);
+    defer eb.deinit();
+    try eb.setText("a\nb");
+    try eb.setCursor(1, 0);
+    try eb.insertText("\u{200b}");
+    try eb.setCursor(0, 0);
+    try eb.deleteLine();
+    var out: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("\u{200b}b", out[0..eb.getText(&out)]);
 }

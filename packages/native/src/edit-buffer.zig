@@ -461,15 +461,15 @@ pub const EditBuffer = struct {
             end = temp;
         }
 
-        if (start.row == end.row and start.col == end.col) return;
+        const rope = self.tb.rope();
+        const start_offset = iter_mod.coordsToOffset(rope, start.row, start.col) orelse return EditBufferError.InvalidCursor;
+        const end_offset = iter_mod.coordsToOffset(rope, end.row, end.col) orelse return EditBufferError.InvalidCursor;
+        // An empty range holds text only where a line without cells, but with bytes, ends the text.
+        if (start_offset == end_offset and (start.col > 0 or end_offset < rope.totalWeight() or
+            rope.count() == (rope.getMarker(.linestart, start.row) orelse return).leaf_index + 1)) return;
 
-        const start_offset = iter_mod.coordsToOffset(self.tb.rope(), start.row, start.col) orelse return EditBufferError.InvalidCursor;
-        const end_offset = iter_mod.coordsToOffset(self.tb.rope(), end.row, end.col) orelse return EditBufferError.InvalidCursor;
-
-        if (start_offset >= end_offset) return;
-
-        var candidate = self.tb.rope().*;
-        try candidate.deleteRangeByWeight(start_offset, end_offset, &self.segment_splitter);
+        var candidate = rope.*;
+        try self.deleteByWeight(&candidate, start_offset, end_offset);
         try self.autoStoreUndo();
         self.tb.rope().root = candidate.root;
         self.tb.rope().version = candidate.version;
@@ -508,7 +508,7 @@ pub const EditBuffer = struct {
         defer segments.segments.deinit(segments.allocator);
 
         var deleted = self.tb.rope().*;
-        try deleted.deleteRangeByWeight(start_offset, end_offset, &self.segment_splitter);
+        if (has_deletion) try self.deleteByWeight(&deleted, start_offset, end_offset);
         var deleted_cursor = if (has_deletion)
             cursorAfterDeletion(self.tb.rope(), &deleted, start_offset)
         else
@@ -563,6 +563,16 @@ pub const EditBuffer = struct {
         self.publishCursor(true);
     }
 
+    /// A weight lies on both sides of zero-width text. A range takes the zero-width text at its start only
+    /// from a line start, and the zero-width text at its end unless it ends at a line start before the text end.
+    fn deleteByWeight(self: *EditBuffer, candidate: *UnifiedRope, start_offset: u32, end_offset: u32) !void {
+        const rope = self.tb.rope();
+        const start = iter_mod.offsetToCoords(rope, start_offset) orelse return EditBufferError.InvalidCursor;
+        const end = iter_mod.offsetToCoords(rope, end_offset) orelse return EditBufferError.InvalidCursor;
+        const end_bias: UnifiedRope.Node.Bias = if (end.col == 0 and end_offset < rope.totalWeight()) .right else .left;
+        try candidate.deleteRangeByWeight(start_offset, end_offset, if (start.col == 0) .right else .left, end_bias, &self.segment_splitter);
+    }
+
     fn cursorAfterDeletion(rope: *const UnifiedRope, deleted: *const UnifiedRope, offset: u32) Cursor {
         std.debug.assert(offset <= rope.totalWeight());
         // Use aggregate metrics rather than allocating or mutating the live marker cache.
@@ -615,16 +625,10 @@ pub const EditBuffer = struct {
     pub fn backspace(self: *EditBuffer) !void {
         const cursor = self.cursor;
 
-        if (cursor.row == 0 and cursor.col == 0) return;
-
         if (cursor.col == 0) {
-            if (cursor.row > 0) {
-                const prev_line_width = iter_mod.lineWidthAt(self.tb.rope(), cursor.row - 1);
-                try self.deleteRange(
-                    .{ .row = cursor.row - 1, .col = prev_line_width },
-                    .{ .row = cursor.row, .col = 0 },
-                );
-            }
+            var start = cursor;
+            if (cursor.row > 0) start = .{ .row = cursor.row - 1, .col = iter_mod.lineWidthAt(self.tb.rope(), cursor.row - 1) };
+            try self.deleteRange(start, cursor);
         } else {
             const prev_grapheme_width = self.tb.getPrevGraphemeWidth(cursor.row, cursor.col);
             if (prev_grapheme_width == 0) return; // Nothing to delete
@@ -646,12 +650,9 @@ pub const EditBuffer = struct {
         const line_count = self.tb.lineCount();
 
         if (cursor.col >= line_width) {
-            if (cursor.row + 1 < line_count) {
-                try self.deleteRange(
-                    .{ .row = cursor.row, .col = line_width },
-                    .{ .row = cursor.row + 1, .col = 0 },
-                );
-            }
+            var end: Cursor = .{ .row = cursor.row, .col = line_width };
+            if (cursor.row + 1 < line_count) end = .{ .row = cursor.row + 1, .col = 0 };
+            try self.deleteRange(.{ .row = cursor.row, .col = line_width }, end);
         } else {
             const grapheme_width = self.tb.getGraphemeWidthAt(cursor.row, cursor.col);
             if (grapheme_width > 0) {
