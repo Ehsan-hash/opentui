@@ -995,13 +995,14 @@ pub fn Rope(comptime T: type) type {
             }
         }
 
-        /// The range lies right of the start split and left of the end split; each bias picks the side there.
-        pub fn deleteRangeByWeight(self: *Self, start: u32, end: u32, start_bias: Node.Bias, end_bias: Node.Bias, split_leaf_fn: *const Node.LeafSplitFn) !void {
+        /// Puts `items` in place of the range right of the start split and left of the end split.
+        pub fn replaceRangeByWeight(self: *Self, start: u32, end: u32, start_bias: Node.Bias, end_bias: Node.Bias, items: []const T, split_leaf_fn: *const Node.LeafSplitFn) !void {
             std.debug.assert(start <= end);
             const first_split = try Node.split_at_weight(self.root, start, start_bias, self.allocator, self.empty_leaf, split_leaf_fn);
             const second_split = try Node.split_at_weight(first_split.right, end - start, end_bias, self.allocator, self.empty_leaf, split_leaf_fn);
 
-            self.root = try self.joinWithBoundary(first_split.left, second_split.right, split_leaf_fn);
+            const left = if (items.len == 0) first_split.left else try self.joinWithBoundary(first_split.left, try rootFromSlice(self.allocator, items), split_leaf_fn);
+            self.root = try self.joinWithBoundary(left, second_split.right, split_leaf_fn);
 
             self.version += 1;
             try self.applyEndsInvariant();
