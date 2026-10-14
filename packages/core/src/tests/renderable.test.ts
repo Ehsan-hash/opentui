@@ -360,23 +360,26 @@ describe("Renderable - layout values beyond the cell range", () => {
     const setup = await createTestRenderer({ width: 8, height: 4 })
     const errors: string[] = []
     setup.renderer.on("render:error", (event: { error: Error }) => errors.push(event.error.message))
-    const box = new Box(setup.renderer, { position: "absolute", border: true, width: 4, height: 3 })
-    box.add(Object.assign(new TextRenderable(setup.renderer, { content: "a" }), child))
-    box.add(new TextRenderable(setup.renderer, { content: "b" }))
-    setup.renderer.root.add(box)
-    const ok = new TextRenderable(setup.renderer, { position: "absolute", left: 6, top: 3, content: "ok" })
-    setup.renderer.root.add(ok)
-    Object.assign(box, values)
-    await setup.renderOnce()
-    Object.assign(box, then ?? { translateX: box.translateX + 1 })
-    await setup.renderOnce()
-    const result = setup.captureCharFrame()
-    // Public sizes are Yoga's, wherever the node is.
-    const { width, height } = box.getLayout()
-    expect([box.width, box.height]).toEqual([Math.max(width, 1), Math.max(height, 1)])
-    setup.renderer.destroy()
-    expect(errors).toEqual([])
-    return result
+    try {
+      const box = new Box(setup.renderer, { position: "absolute", border: true, width: 4, height: 3 })
+      box.add(Object.assign(new TextRenderable(setup.renderer, { content: "a" }), child))
+      box.add(new TextRenderable(setup.renderer, { content: "b" }))
+      setup.renderer.root.add(box)
+      const ok = new TextRenderable(setup.renderer, { position: "absolute", left: 6, top: 3, content: "ok" })
+      setup.renderer.root.add(ok)
+      Object.assign(box, values)
+      await setup.renderOnce()
+      Object.assign(box, then ?? { translateX: box.translateX + 1 })
+      await setup.renderOnce()
+      const result = setup.captureCharFrame()
+      // Public sizes are Yoga's, wherever the node is.
+      const { width, height } = box.getLayout()
+      expect([box.width, box.height]).toEqual([Math.max(width, 1), Math.max(height, 1)])
+      expect(errors).toEqual([])
+      return result
+    } finally {
+      setup.renderer.destroy()
+    }
   }
 
   // A rest parameter keeps the callback's arity at zero, so Bun does not pass `done` for rows without `then`.
@@ -403,14 +406,15 @@ describe("Renderable - layout values beyond the cell range", () => {
   }
   const slider = (Slider: typeof SliderRenderable) => (renderer: TestRenderer) =>
     new Slider(renderer, { position: "absolute", orientation: "horizontal", width: 4, height: 1, value: 50 })
-  const image = (renderer: TestRenderer) =>
-    new HostImage(renderer, {
-      position: "absolute",
-      width: 4,
-      height: 2,
-      fit: "fill",
-      source: NativeImage.fromRgba(Uint8Array.of(12, 34, 56, 255), 1, 1),
-    })
+  const image = (renderer: TestRenderer) => {
+    const source = NativeImage.fromRgba(Uint8Array.of(12, 34, 56, 255), 1, 1)
+    // The renderable retains the source; the caller's reference must still be disposed.
+    try {
+      return new HostImage(renderer, { position: "absolute", width: 4, height: 2, fit: "fill", source })
+    } finally {
+      source.dispose()
+    }
+  }
   // Widgets that read their own size: a ScrollBox scrolls, and host renderSelf draws with paint geometry.
   test.each<[string, Values, Values, (renderer: TestRenderer) => Renderable]>([
     ["ScrollBox", { height: 2 ** 31 }, { height: 1e9 }, scrollBox],
@@ -423,18 +427,20 @@ describe("Renderable - layout values beyond the cell range", () => {
       const setup = await createTestRenderer({ width: 8, height: 4 })
       const errors: string[] = []
       setup.renderer.on("render:error", (event: { error: Error }) => errors.push(event.error.message))
-      const widget = make(setup.renderer)
-      setup.renderer.root.add(widget)
-      await (widget as ImageRenderable).loadPromise
-      await setup.renderOnce()
-      Object.assign(widget, values)
-      await setup.renderOnce()
-      if (widget instanceof ScrollBoxRenderable) widget.scrollTop = 3
-      await setup.renderOnce()
-      const result = setup.captureCharFrame()
-      setup.renderer.destroy()
-      expect(errors).toEqual([])
-      return result
+      try {
+        const widget = make(setup.renderer)
+        setup.renderer.root.add(widget)
+        await (widget as ImageRenderable).loadPromise
+        await setup.renderOnce()
+        Object.assign(widget, values)
+        await setup.renderOnce()
+        if (widget instanceof ScrollBoxRenderable) widget.scrollTop = 3
+        await setup.renderOnce()
+        expect(errors).toEqual([])
+        return setup.captureCharFrame()
+      } finally {
+        setup.renderer.destroy()
+      }
     }
     expect(await frame(values)).toBe(await frame(reference))
   })
@@ -448,14 +454,17 @@ describe("Renderable - layout values beyond the cell range", () => {
     }
     const updates = async (translateX: number) => {
       const setup = await createTestRenderer({ width: 8, height: 4 })
-      const scroll = new ScrollBoxRenderable(setup.renderer, { width: 8, height: 4 })
-      for (let i = 0; i < 20; i++) scroll.add(new Counted(setup.renderer, { height: 1 }))
-      setup.renderer.root.add(scroll)
-      scroll.translateX = translateX
-      count = 0
-      await setup.renderOnce()
-      setup.renderer.destroy()
-      return count
+      try {
+        const scroll = new ScrollBoxRenderable(setup.renderer, { width: 8, height: 4 })
+        for (let i = 0; i < 20; i++) scroll.add(new Counted(setup.renderer, { height: 1 }))
+        setup.renderer.root.add(scroll)
+        scroll.translateX = translateX
+        count = 0
+        await setup.renderOnce()
+        return count
+      } finally {
+        setup.renderer.destroy()
+      }
     }
     expect([await updates(x), await updates(0)]).toEqual([4, 4])
   })
