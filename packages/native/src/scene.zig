@@ -258,6 +258,8 @@ pub const Node = struct {
     text: ?*Text = null,
     editor: ?*Editor = null,
     measure_overridden: bool = false,
+    // The layout epoch of the solve whose custom measurement failed, or zero.
+    measure_failed_solve: u64 = 0,
     control: Control = .{ .slider = .{} },
     hook_flags: u32 = 0,
     hook_generation: u64 = 0,
@@ -378,6 +380,8 @@ pub const Scene = struct {
     layout_width: u32 = 0,
     layout_height: u32 = 0,
     preparation_dirty: bool = true,
+    // Some node holds a failed custom measurement that Yoga cached.
+    measure_failed: bool = false,
     test_prepare_steps: if (builtin.is_test) u64 else void = if (builtin.is_test) 0 else {},
     test_geometry_reads: if (builtin.is_test) u64 else void = if (builtin.is_test) 0 else {},
     test_style_reads: if (builtin.is_test) u64 else void = if (builtin.is_test) 0 else {},
@@ -776,6 +780,7 @@ pub const Scene = struct {
                 .bounded_work = max_work_items != std.math.maxInt(u32),
             };
             self.last_frame_id = frame_id;
+            self.retryFailedMeasures();
         }
         errdefer {
             self.releaseEditorCursor(cli);
@@ -1063,6 +1068,19 @@ pub const Scene = struct {
         if (self.root != root) return error.InvalidOptions;
         const next_frame = std.math.add(u64, self.last_frame_id, 1) catch return error.RequestLimit;
         try self.solveLayout(cli, root, next_frame, 0);
+    }
+
+    /// Runs once per frame attempt, so a provider that always fails is called once
+    /// per frame and never forces another layout round.
+    fn retryFailedMeasures(self: *Scene) void {
+        if (!self.measure_failed) return;
+        self.measure_failed = false;
+        var cursor = self.head;
+        while (cursor) |value| : (cursor = value.scene_node.?.next) {
+            if (value.scene_node.?.measure_failed_solve == 0) continue;
+            value.scene_node.?.measure_failed_solve = 0;
+            yoga.yogaNodeInvalidateMeasure(value.yoga_node);
+        }
     }
 
     fn solveLayout(self: *Scene, cli: *renderer.CliRenderer, root: *native.NativeRenderable, frame_id: u64, round: u32) !void {

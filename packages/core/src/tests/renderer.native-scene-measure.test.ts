@@ -1,10 +1,11 @@
-import { afterEach, test } from "bun:test"
+import { afterEach, spyOn, test } from "bun:test"
 import assert from "node:assert/strict"
 import { CliRenderEvents, type CliRendererErrorEvent } from "../renderer.js"
 import { BoxRenderable } from "../renderables/Box.js"
 import { TextRenderable } from "../renderables/Text.js"
 import { ManualClock } from "../testing/manual-clock.js"
 import { createTestRenderer, type TestRendererSetup } from "../testing/test-renderer.js"
+import type { Size } from "../yoga.js"
 
 const setups: TestRendererSetup[] = []
 async function setup() {
@@ -43,28 +44,41 @@ test("native custom measurement replaces, dirties, and clears", async () => {
   assert.equal(text.getLayout().height, 0)
 })
 
-test("native measurement exceptions preserve the previous frame and permit retry", async () => {
-  const { renderer, renderOnce, captureSpans } = await setup()
-  const box = new BoxRenderable(renderer, { width: 2, height: 1, backgroundColor: "red" })
-  renderer.root.add(box)
-  await renderOnce()
-  const before = captureSpans()
-  const errors: unknown[] = []
-  renderer.on(CliRenderEvents.RENDER_ERROR, (event: CliRendererErrorEvent) => errors.push(event.error))
-  box.width = "auto"
-  box.height = "auto"
-  const failure = new Error("measure failure")
-  box.setMeasureProvider(() => {
-    throw failure
+const measureFailures: [string, (box: BoxRenderable) => unknown, number][] = [
+  ["throws", () => assert.fail("measure failure"), 1],
+  ["returns a promise", async () => ({ width: 3, height: 1 }), 1],
+  ["mutates Yoga", (box) => box.invalidateIntrinsicSize(), 1],
+  ["returns NaN", () => ({ width: NaN, height: NaN }), 0],
+]
+
+for (const [name, fail, errorsPerFrame] of measureFailures) {
+  test(`native measurement that ${name} measures once per frame until it succeeds`, async () => {
+    const { renderer, renderOnce, captureSpans } = await setup()
+    // A growing item in a wrapping row is measured twice in one solve.
+    const row = new BoxRenderable(renderer, { flexDirection: "row", flexWrap: "wrap" })
+    const box = new BoxRenderable(renderer, { width: 2, height: 1, backgroundColor: "red", flexGrow: 1 })
+    renderer.root.add(row)
+    row.add(box)
+    await renderOnce()
+    const before = captureSpans()
+    const errors: unknown[] = []
+    renderer.on(CliRenderEvents.RENDER_ERROR, (event: CliRendererErrorEvent) => errors.push(event.error))
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    box.width = "auto"
+    box.height = "auto"
+    let calls = 0
+    box.setMeasureProvider(() => (++calls <= 2 ? fail(box) : { width: 3, height: 1 }) as Size)
+    await renderOnce()
+    if (errorsPerFrame) assert.deepEqual(captureSpans(), before)
+    await renderOnce()
+    assert.equal(calls, 2)
+    assert.equal(errors.length, 2 * errorsPerFrame)
+    await renderOnce()
+    assert.deepEqual([box.width, box.height], [12, 1])
+    assert.deepEqual(warn.mock.calls, [])
+    warn.mockRestore()
   })
-  await renderOnce()
-  assert.deepEqual(errors, [failure])
-  assert.deepEqual(captureSpans(), before)
-  box.setMeasureProvider(() => ({ width: 3, height: 1 }))
-  await renderOnce()
-  assert.equal(box.height, 1)
-  assert.deepEqual(errors, [failure])
-})
+}
 
 test("native measured leaves reject children and destroyed providers cannot poison a peer", async () => {
   const target = await setup()
