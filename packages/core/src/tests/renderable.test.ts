@@ -18,6 +18,8 @@ import { BoxRenderable, type BoxOptions } from "../renderables/Box.js"
 import { Align, Edge, FlexDirection, Gutter, Justify, PositionType, Unit, Wrap } from "../yoga.js"
 import { InputRenderable } from "../renderables/Input.js"
 import { SliderRenderable } from "../renderables/Slider.js"
+import { ImageRenderable } from "../renderables/Image.js"
+import { NativeImage } from "../image.js"
 import type { OptimizedBuffer } from "../buffer.js"
 import { RGBA } from "../lib/RGBA.js"
 import { NativeError, NativeStatus } from "../zig.js"
@@ -378,6 +380,59 @@ describe("Renderable - layout values beyond the cell range", () => {
     for (const Box of [BoxRenderable, HostBox]) {
       expect(await frame(Box, values, then)).toEqual(await frame(Box, reference, then))
     }
+  })
+
+  class HostSlider extends SliderRenderable {
+    protected renderSelf(buffer: OptimizedBuffer): void {
+      super.renderSelf(buffer)
+    }
+  }
+  class HostImage extends ImageRenderable {
+    protected renderSelf(buffer: OptimizedBuffer): void {
+      super.renderSelf(buffer)
+    }
+  }
+  const scrollBox = (renderer: TestRenderer) => {
+    const scroll = new ScrollBoxRenderable(renderer, { position: "absolute", width: 6, height: 3 })
+    for (let i = 0; i < 20; i++) scroll.add(new TextRenderable(renderer, { content: `l${i}` }))
+    return scroll
+  }
+  const slider = (Slider: typeof SliderRenderable) => (renderer: TestRenderer) =>
+    new Slider(renderer, { position: "absolute", orientation: "horizontal", width: 4, height: 1, value: 50 })
+  const image = (renderer: TestRenderer) =>
+    new HostImage(renderer, {
+      position: "absolute",
+      width: 4,
+      height: 2,
+      fit: "fill",
+      source: NativeImage.fromRgba(Uint8Array.of(12, 34, 56, 255), 1, 1),
+    })
+  // Widgets that read their own size: a ScrollBox scrolls, and host renderSelf draws with paint geometry.
+  test.each<[string, Values, Values, (renderer: TestRenderer) => Renderable]>([
+    ["ScrollBox", { height: 2 ** 31 }, { height: 1e9 }, scrollBox],
+    ["Slider", { width: 3e9 }, { width: 1e9 }, slider(SliderRenderable)],
+    ["host Slider", { width: 3e9 }, { width: 1e9 }, slider(HostSlider)],
+    ["host Image", { width: 3e9 }, { width: 1e9 }, image],
+    ["host Image", { left: -3e9, width: 1e10 }, { left: -3e8, width: 1e9 }, image],
+  ])("a %s at %o paints like %o", async (_, values, reference, make) => {
+    const frame = async (values: Values) => {
+      const setup = await createTestRenderer({ width: 8, height: 4 })
+      const errors: string[] = []
+      setup.renderer.on("render:error", (event: { error: Error }) => errors.push(event.error.message))
+      const widget = make(setup.renderer)
+      setup.renderer.root.add(widget)
+      await (widget as ImageRenderable).loadPromise
+      await setup.renderOnce()
+      Object.assign(widget, values)
+      await setup.renderOnce()
+      if (widget instanceof ScrollBoxRenderable) widget.scrollTop = 3
+      await setup.renderOnce()
+      const result = setup.captureCharFrame()
+      setup.renderer.destroy()
+      expect(errors).toEqual([])
+      return result
+    }
+    expect(await frame(values)).toBe(await frame(reference))
   })
 
   test.each([2 ** 31, -(2 ** 31), 3.4e38])("a ScrollBox at translateX %d updates the children it shows", async (x) => {

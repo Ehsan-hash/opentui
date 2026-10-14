@@ -1642,9 +1642,10 @@ pub fn sliderThumb(options: SliderOptions, width: f64, height: f64) !SliderThumb
         if (!std.math.isFinite(value)) return error.InvalidOptions;
     }
     for ([_]f64{ width, height }) |dimension| {
-        if (!std.math.isFinite(dimension) or dimension < 0 or dimension > std.math.maxInt(i32)) return error.InvalidDimensions;
+        if (std.math.isNan(dimension) or dimension < 0) return error.InvalidDimensions;
     }
-    const track_size = (if (options.orientation == 0) width else height) * 2;
+    // A track beyond the i32 cell range saturates, like paint geometry.
+    const track_size = @min(if (options.orientation == 0) width else height, std.math.maxInt(i32)) * 2;
     const range = options.max - options.min;
     if (!std.math.isFinite(range)) return error.InvalidOptions;
     if (range == 0) return .{ .size = track_size, .start = 0 };
