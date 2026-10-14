@@ -84,11 +84,11 @@ test "Scene editor clamps cursor coordinates to terminal storage" {
     defer owner.deinit() catch unreachable;
     const fixture = try setup(owner, 4, 2);
     try owner.sceneSetFocus(fixture.node, true);
-    for ([_]f64{ 65535, 65536, 1e9 }) |translate| {
-        try owner.sceneSetPaint(fixture.node, .{ .translateX = translate, .translateY = translate });
+    for ([_][2]f64{ .{ -1e9, 1 }, .{ 65534, 65535 }, .{ 65535, 65536 }, .{ 1e9, 65536 } }) |row| {
+        try owner.sceneSetPaint(fixture.node, .{ .translateX = row[0], .translateY = row[0] });
         try repaint(owner, fixture.session, background, true, 0);
         const cursor = try owner.sceneGetCursorState(fixture.session);
-        try testing.expectEqual([2]u32{ 65536, 65536 }, [2]u32{ cursor.x, cursor.y });
+        try testing.expectEqual([2]f64{ row[1], row[1] }, [2]f64{ @floatFromInt(cursor.x), @floatFromInt(cursor.y) });
     }
 }
 

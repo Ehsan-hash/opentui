@@ -486,6 +486,7 @@ describe("scene paint encoding", () => {
     ["an infinite translation", { translateX: Infinity }, RangeError],
     ["a NaN translation", { translateY: NaN }, RangeError],
     ["a translation beyond f32", { translateX: 1e39 }, RangeError],
+    ["a vertical translation beyond f32", { translateY: -1e39 }, RangeError],
     ["a fifth border side", { border: 16 }, RangeError],
     ["a numeric shouldFill", { shouldFill: 1 }, TypeError],
     ["a string focusable", { focusable: "yes" }, TypeError],

@@ -4041,7 +4041,7 @@ test "Scene ABI records preserve rejected outputs and read real Session metadata
     try std.testing.expectEqual(@as(u32, 2), cursor.style);
     try std.testing.expectEqual(@as(u32, 0), cursor.blinking);
     try std.testing.expectEqual(@as(u32, 0), cursor.reserved);
-    try std.testing.expectError(error.InvalidOptions, owner.core.sceneSetPaint(handleFromC(box), .{ .translateX = std.math.floatMax(f64) }));
+    try std.testing.expectError(error.InvalidOptions, owner.core.sceneSetPaint(handleFromC(box), .{ .translateY = -std.math.floatMax(f64) }));
     try std.testing.expectEqual(c.OT_OK, ot_scene_get_layout(handle, &box, 1, &layout));
     try std.testing.expectEqual(@as(f64, 0), layout.screen_x);
     try owner.core.cancelSession(session);
