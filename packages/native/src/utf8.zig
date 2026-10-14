@@ -1038,10 +1038,6 @@ fn findPosByWidthUnicode(
     include_start_before: bool,
     width_method: WidthMethod,
 ) PosByWidthResult {
-    if (text.len == 0 or max_columns == 0) {
-        return .{ .byte_offset = 0, .grapheme_count = 0, .columns_used = 0 };
-    }
-
     // ASCII-only fast path
     if (isASCIIOnly) {
         if (max_columns >= text.len) {
@@ -1168,10 +1164,6 @@ fn findPosByWidthWCWidth(
     isASCIIOnly: bool,
     include_start_before: bool,
 ) PosByWidthResult {
-    if (text.len == 0 or max_columns == 0) {
-        return .{ .byte_offset = 0, .grapheme_count = 0, .columns_used = 0 };
-    }
-
     // ASCII-only fast path
     if (isASCIIOnly) {
         if (max_columns >= text.len) {

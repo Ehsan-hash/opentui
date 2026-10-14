@@ -1090,21 +1090,7 @@ pub const UnifiedTextBufferView = struct {
                     width_method,
                 );
                 if (pos.byte_offset >= bytes.len) return null;
-                var width = utf8.getGraphemeWidthAt(bytes, pos.byte_offset, tab_width, control_display, width_method);
-                if (width == 0) {
-                    const next = utf8.findGraphemePosByWidth(
-                        bytes,
-                        pos.columns_used + 1,
-                        tab_width,
-                        control_display,
-                        is_ascii,
-                        false,
-                        width_method,
-                    );
-                    if (next.byte_offset < bytes.len) {
-                        width = utf8.getGraphemeWidthAt(bytes, next.byte_offset, tab_width, control_display, width_method);
-                    }
-                }
+                const width = utf8.getGraphemeWidthAt(bytes, pos.byte_offset, tab_width, control_display, width_method);
                 const first_cp = utf8.decodeUtf8Unchecked(bytes, pos.byte_offset).cp;
                 const start = line_start + cols_before + pos.columns_used;
                 return .{
