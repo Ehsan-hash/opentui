@@ -177,7 +177,8 @@ It adds the values and types in this section.
 ### Base-layout fallback
 
 `registerBaseLayoutFallback()` appends an event-match resolver that reads `KeyEvent.baseCode`.
-It lets a key binding match the physical base-layout codepoint when Kitty reports one.
+It lets a key binding match the physical base-layout codepoint when Kitty reports one for a non-Latin key event.
+The fallback only applies when `KeyEvent.name` is one non-ASCII character, so Latin-layout key names stay direct.
 
 Register the default event matcher first. Its direct event candidate then runs before the base-layout fallback across all
 active layers.

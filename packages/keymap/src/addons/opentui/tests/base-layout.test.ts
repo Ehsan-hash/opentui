@@ -41,8 +41,51 @@ describe("base layout fallback addon", () => {
     keymap.registerLayer({ bindings: [{ key: "ctrl+c", cmd: "copy" }] })
 
     renderer.stdin.emit("data", Buffer.from("\x1b[12618::99;5u"))
+    renderer.stdin.emit("data", Buffer.from("\x1b[1089::99;5u"))
 
-    expect(calls).toEqual(["copy"])
+    expect(calls).toEqual(["copy", "copy"])
+  })
+
+  test("does not match Latin-layout base codes when the event name is Latin", () => {
+    const keymap = getKeymap(renderer)
+    const calls: string[] = []
+
+    registerBaseLayoutFallback(keymap)
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "copy",
+          run() {
+            calls.push("copy")
+          },
+        },
+        {
+          name: "delete",
+          run() {
+            calls.push("delete")
+          },
+        },
+        {
+          name: "undo",
+          run() {
+            calls.push("undo")
+          },
+        },
+      ],
+    })
+    keymap.registerLayer({
+      bindings: [
+        { key: "ctrl+c", cmd: "copy" },
+        { key: "ctrl+d", cmd: "delete" },
+        { key: "ctrl+z", cmd: "undo" },
+      ],
+    })
+
+    renderer.stdin.emit("data", Buffer.from("\x1b[106::99;5u"))
+    renderer.stdin.emit("data", Buffer.from("\x1b[101::100;5u"))
+    renderer.stdin.emit("data", Buffer.from("\x1b[59::122;5u"))
+
+    expect(calls).toEqual([])
   })
 
   test("keeps direct stroke matches ahead of base-layout fallbacks", () => {
@@ -92,21 +135,21 @@ describe("base layout fallback addon", () => {
           },
         },
       ],
-      bindings: [{ key: "ctrl+k", cmd: "delete-to-end" }],
+      bindings: [{ key: { name: "л", ctrl: true }, cmd: "delete-to-end" }],
     })
     keymap.registerLayer({
       commands: [
         {
-          name: "paste",
+          name: "fallback-delete-to-end",
           run() {
-            calls.push("paste")
+            calls.push("fallback-delete-to-end")
           },
         },
       ],
-      bindings: [{ key: "ctrl+v", cmd: "paste" }],
+      bindings: [{ key: "ctrl+k", cmd: "fallback-delete-to-end" }],
     })
 
-    renderer.stdin.emit("data", Buffer.from("\x1b[107::118;5u"))
+    renderer.stdin.emit("data", Buffer.from("\x1b[1083::107;5u"))
 
     expect(calls).toEqual(["delete-to-end"])
   })

@@ -3,8 +3,8 @@ import type { Keymap } from "../../index.js"
 
 const BASE_LAYOUT_FALLBACK_RESOURCE = Symbol("keymap:base-layout-fallback")
 
-function getBaseLayoutKeyName(baseCode: number | undefined): string | undefined {
-  if (baseCode === undefined || baseCode < 32 || baseCode === 127) {
+function getBaseLayoutKeyName(typedName: string, baseCode: number | undefined): string | undefined {
+  if (!/^[^\x00-\x7f]$/u.test(typedName) || baseCode === undefined || baseCode < 32 || baseCode === 127) {
     return undefined
   }
 
@@ -22,13 +22,13 @@ function getBaseLayoutKeyName(baseCode: number | undefined): string | undefined 
 }
 
 /**
- * Falls back to the event's base layout code so bindings can ignore active
- * keyboard layout changes.
+ * Falls back to the event's base layout code for non-Latin key events so
+ * bindings can keep matching shortcuts across keyboard layouts.
  */
 export function registerBaseLayoutFallback(keymap: Keymap<Renderable, KeyEvent>): () => void {
   return keymap.acquireResource(BASE_LAYOUT_FALLBACK_RESOURCE, () => {
     return keymap.appendEventMatchResolver((event, ctx) => {
-      const name = getBaseLayoutKeyName(event.baseCode)
+      const name = getBaseLayoutKeyName(event.name, event.baseCode)
       if (!name) {
         return undefined
       }
