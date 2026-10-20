@@ -2436,7 +2436,11 @@ pub const OptimizedBuffer = struct {
                     // A combining mark joins the glyph before it, which passed the checks below; other
                     // zero-width clusters keep that glyph. Only a glyph that this iteration draws sets it again.
                     if (cluster_width_cols == 0) {
-                        if (mark_base != null and utf8.isCombiningMark(grapheme_bytes)) {
+                        if (mark_base != null and self.canAttachZeroWidthCluster(
+                            text_buffer,
+                            mark_base.?,
+                            grapheme_bytes,
+                        )) {
                             mark_base = try self.attachCombiningMark(checked, grapheme_bytes, mark_base.?, @intCast(currentY), text_buffer.widthMethod());
                         }
                         continue;
@@ -2739,6 +2743,32 @@ pub const OptimizedBuffer = struct {
 
             currentY += 1;
         }
+    }
+
+    fn canAttachZeroWidthCluster(self: *OptimizedBuffer, text_buffer: *const TextBuffer, base: MarkBase, suffix: []const u8) bool {
+        const base_bytes = if (gp.isGraphemeChar(base.char))
+            self.pool.get(gp.graphemeIdFromChar(base.char)) catch return false
+        else
+            &[_]u8{@intCast(base.char)};
+        if (suffix.len == 0) return false;
+
+        const base_len = base_bytes.len;
+        var pos: usize = 0;
+        var previous_cp: ?u21 = null;
+        var break_state = @import("uucode").grapheme.BreakState.default;
+        while (pos < base_len + suffix.len) {
+            const bytes = if (pos < base_len) base_bytes else suffix;
+            const local_pos = if (pos < base_len) pos else pos - base_len;
+            const decoded = utf8.decodeUtf8Unchecked(bytes, local_pos);
+            const in_suffix = pos >= base_len;
+            if (previous_cp) |prev| {
+                const is_break = utf8.isGraphemeBreak(prev, decoded.cp, &break_state, text_buffer.widthMethod());
+                if (in_suffix and is_break) return false;
+            }
+            previous_cp = decoded.cp;
+            pos += decoded.len;
+        }
+        return true;
     }
 
     /// Combines a zero-width mark with the glyph that this draw wrote just before it, as if both

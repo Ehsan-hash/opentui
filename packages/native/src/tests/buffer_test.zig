@@ -1234,6 +1234,77 @@ test "OptimizedBuffer text views attach a combining mark only to the glyph drawn
     try std.testing.expectEqual(0, pools.graphemes.interned_live_ids.count());
 }
 
+test "OptimizedBuffer word wrapped text views keep a leading combining mark visible" {
+    var pools = TestPools.init(std.testing.allocator);
+    defer pools.deinit();
+
+    const one_chunk = try OptimizedBuffer.init(std.testing.allocator, 6, 2, .{ .pool = &pools.graphemes, .link_pool = &pools.links });
+    defer one_chunk.deinit();
+    const split_chunks = try OptimizedBuffer.init(std.testing.allocator, 6, 2, .{ .pool = &pools.graphemes, .link_pool = &pools.links });
+    defer split_chunks.deinit();
+
+    for ([_]*OptimizedBuffer{ one_chunk, split_chunks }, [_][]const []const u8{
+        &.{"xa \u{301}x"},
+        &.{ "xa ", "\u{301}x" },
+    }) |target, pieces| {
+        target.clear(ansi.rgbColor(0, 0, 0, 255), null);
+        var content = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, .unicode);
+        defer content.deinit();
+        try content.setText(pieces[0]);
+        for (pieces[1..]) |piece| try content.append(piece);
+        const view = try TextBufferView.init(std.testing.allocator, content);
+        defer view.deinit();
+        view.setWrapMode(.word);
+        view.setWrapWidth(3);
+        try target.drawTextBufferChecked(view, 0, 0);
+    }
+
+    try expectSameCells(one_chunk, split_chunks);
+    try std.testing.expectEqual(@as(u32, 'x'), split_chunks.get(0, 0).?.char);
+    try std.testing.expectEqual(@as(u32, 'a'), split_chunks.get(1, 0).?.char);
+    const marked_space = split_chunks.get(2, 0).?.char;
+    try std.testing.expect(gp.isGraphemeChar(marked_space));
+    try std.testing.expectEqualStrings(" \u{301}", try pools.graphemes.get(gp.graphemeIdFromChar(marked_space)));
+    try std.testing.expectEqual(@as(u32, 'x'), split_chunks.get(0, 1).?.char);
+}
+
+test "OptimizedBuffer word wrapped text views preserve zero-width grapheme prefixes for every width method" {
+    for (std.enums.values(@import("../utf8.zig").WidthMethod)) |width_method| {
+        var pools = TestPools.init(std.testing.allocator);
+        defer pools.deinit();
+
+        const one_chunk = try OptimizedBuffer.init(std.testing.allocator, 6, 2, .{ .pool = &pools.graphemes, .link_pool = &pools.links, .width_method = width_method });
+        defer one_chunk.deinit();
+        const split_chunks = try OptimizedBuffer.init(std.testing.allocator, 6, 2, .{ .pool = &pools.graphemes, .link_pool = &pools.links, .width_method = width_method });
+        defer split_chunks.deinit();
+
+        for ([_]*OptimizedBuffer{ one_chunk, split_chunks }, [_][]const []const u8{
+            &.{"xa \u{200d}\u{301}x"},
+            &.{ "xa ", "\u{200d}\u{301}x" },
+        }) |target, pieces| {
+            target.clear(ansi.rgbColor(0, 0, 0, 255), null);
+            var content = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, width_method);
+            defer content.deinit();
+            try content.setText(pieces[0]);
+            for (pieces[1..]) |piece| try content.append(piece);
+            const view = try TextBufferView.init(std.testing.allocator, content);
+            defer view.deinit();
+            view.setWrapMode(.word);
+            view.setWrapWidth(3);
+            try target.drawTextBufferChecked(view, 0, 0);
+        }
+
+        try expectSameCells(one_chunk, split_chunks);
+        var found_mark = false;
+        for (split_chunks.buffer.char) |char| {
+            if (!gp.isGraphemeChar(char)) continue;
+            const bytes = try pools.graphemes.get(gp.graphemeIdFromChar(char));
+            if (std.mem.indexOf(u8, bytes, "\u{301}") != null) found_mark = true;
+        }
+        if (width_method != .no_zwj) try std.testing.expect(found_mark);
+    }
+}
+
 test "OptimizedBuffer - drawGrapheme preserves authoritative width" {
     var pools = TestPools.init(std.testing.allocator);
     defer pools.deinit();

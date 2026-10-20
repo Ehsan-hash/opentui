@@ -4684,6 +4684,155 @@ fn expectSameWrap(edited: *TextBuffer, width: u32, mode: text_buffer_view.WrapMo
     }
 }
 
+test "TextBufferView word wrapping keeps a combining mark before a split word" {
+    const Row = struct {
+        whole: []const u8,
+        pieces: []const []const u8,
+        width: u32,
+        line_widths: []const u32,
+        line_bytes: []const []const u8,
+    };
+    const rows = [_]Row{
+        .{ .whole = "xa \u{301}x", .pieces = &.{ "xa ", "\u{301}x" }, .width = 3, .line_widths = &.{ 3, 1 }, .line_bytes = &.{ "xa \u{301}", "x" } },
+        .{ .whole = "ab \u{301}c", .pieces = &.{ "ab ", "\u{301}c" }, .width = 3, .line_widths = &.{ 3, 1 }, .line_bytes = &.{ "ab \u{301}", "c" } },
+        .{ .whole = "xa \u{301}\u{300}x", .pieces = &.{ "xa ", "\u{301}", "\u{300}x" }, .width = 3, .line_widths = &.{ 3, 1 }, .line_bytes = &.{ "xa \u{301}\u{300}", "x" } },
+        .{ .whole = "AB\u{65e5}\u{672c}", .pieces = &.{ "AB", "\u{65e5}", "\u{672c}" }, .width = 4, .line_widths = &.{ 4, 2 }, .line_bytes = &.{ "AB\u{65e5}", "\u{672c}" } },
+        .{ .whole = "ab\t\u{301}x", .pieces = &.{ "ab\t", "\u{301}x" }, .width = 4, .line_widths = &.{ 4, 1 }, .line_bytes = &.{ "ab\t", "\u{301}x" } },
+        .{ .whole = "ab\u{200b}\u{301}x", .pieces = &.{ "ab\u{200b}", "\u{301}x" }, .width = 2, .line_widths = &.{ 2, 1 }, .line_bytes = &.{ "ab", "\u{301}x" } },
+    };
+
+    for (rows) |row| {
+        var pools = TestPools.init(std.testing.allocator);
+        defer pools.deinit();
+
+        var one_chunk = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, .unicode);
+        defer one_chunk.deinit();
+        try one_chunk.setText(row.whole);
+
+        var split_chunks = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, .unicode);
+        defer split_chunks.deinit();
+        try split_chunks.setText(row.pieces[0]);
+        for (row.pieces[1..]) |piece| try split_chunks.append(piece);
+
+        const one_view = try TextBufferView.init(std.testing.allocator, one_chunk);
+        defer one_view.deinit();
+        const split_view = try TextBufferView.init(std.testing.allocator, split_chunks);
+        defer split_view.deinit();
+        for ([_]*TextBufferView{ one_view, split_view }) |view| {
+            view.setWrapMode(.word);
+            view.setWrapWidth(row.width);
+        }
+
+        const one_lines = one_view.getVirtualLines();
+        const split_lines = split_view.getVirtualLines();
+        try std.testing.expectEqualSlices(u32, row.line_widths, one_view.getCachedLineInfo().line_width_cols);
+        try std.testing.expectEqualSlices(u32, row.line_widths, split_view.getCachedLineInfo().line_width_cols);
+        try std.testing.expectEqual(row.line_bytes.len, one_lines.len);
+        try std.testing.expectEqual(one_lines.len, split_lines.len);
+        for (row.line_bytes, one_lines, split_lines) |expected, one_line, split_line| {
+            var one_bytes: [64]u8 = undefined;
+            var split_bytes: [64]u8 = undefined;
+            try std.testing.expectEqualStrings(expected, lineBytes(one_line, one_chunk, &one_bytes));
+            try std.testing.expectEqualStrings(expected, lineBytes(split_line, split_chunks, &split_bytes));
+        }
+    }
+}
+
+test "TextBufferView word wrapping keeps zero-width boundaries without wrap pressure" {
+    const Row = struct {
+        whole: []const u8,
+        pieces: []const []const u8,
+        width: u32,
+        line_widths: []const u32,
+        line_bytes: []const []const u8,
+    };
+    const rows = [_]Row{
+        .{ .whole = "ab\t\u{301}", .pieces = &.{ "ab\t", "\u{301}" }, .width = 100, .line_widths = &.{4}, .line_bytes = &.{"ab\t\u{301}"} },
+        .{ .whole = "ab\u{200b}\u{301}", .pieces = &.{ "ab\u{200b}", "\u{301}" }, .width = 100, .line_widths = &.{2}, .line_bytes = &.{"ab\u{301}"} },
+    };
+
+    for (rows) |row| {
+        var pools = TestPools.init(std.testing.allocator);
+        defer pools.deinit();
+
+        var one_chunk = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, .unicode);
+        defer one_chunk.deinit();
+        try one_chunk.setText(row.whole);
+
+        var split_chunks = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, .unicode);
+        defer split_chunks.deinit();
+        try split_chunks.setText(row.pieces[0]);
+        for (row.pieces[1..]) |piece| try split_chunks.append(piece);
+
+        const one_view = try TextBufferView.init(std.testing.allocator, one_chunk);
+        defer one_view.deinit();
+        const split_view = try TextBufferView.init(std.testing.allocator, split_chunks);
+        defer split_view.deinit();
+        for ([_]*TextBufferView{ one_view, split_view }) |view| {
+            view.setWrapMode(.word);
+            view.setWrapWidth(row.width);
+        }
+
+        const one_lines = one_view.getVirtualLines();
+        const split_lines = split_view.getVirtualLines();
+        try std.testing.expectEqualSlices(u32, row.line_widths, one_view.getCachedLineInfo().line_width_cols);
+        try std.testing.expectEqualSlices(u32, row.line_widths, split_view.getCachedLineInfo().line_width_cols);
+        try std.testing.expectEqual(row.line_bytes.len, one_lines.len);
+        try std.testing.expectEqual(one_lines.len, split_lines.len);
+        for (row.line_bytes, one_lines, split_lines) |expected, one_line, split_line| {
+            var one_bytes: [64]u8 = undefined;
+            var split_bytes: [64]u8 = undefined;
+            try std.testing.expectEqualStrings(expected, lineBytes(one_line, one_chunk, &one_bytes));
+            try std.testing.expectEqualStrings(expected, lineBytes(split_line, split_chunks, &split_bytes));
+        }
+    }
+}
+
+test "TextBufferView word wrapping keeps zero-width grapheme prefixes across chunks for every width method" {
+    const methods = std.enums.values(@import("../utf8.zig").WidthMethod);
+    for (methods) |method| {
+        var pools = TestPools.init(std.testing.allocator);
+        defer pools.deinit();
+
+        var one_chunk = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, method);
+        defer one_chunk.deinit();
+        try one_chunk.setText("xa \u{200d}\u{301}x");
+
+        const one_view = try TextBufferView.init(std.testing.allocator, one_chunk);
+        defer one_view.deinit();
+        one_view.setWrapMode(.word);
+        one_view.setWrapWidth(3);
+        try std.testing.expectEqualSlices(u32, &.{ 3, 1 }, one_view.getCachedLineInfo().line_width_cols);
+        const split_parts = [_][]const []const u8{
+            &.{ "xa ", "\u{200d}\u{301}x" },
+            &.{ "xa ", "\u{200d}", "\u{301}x" },
+        };
+        for (split_parts) |parts| {
+            const expected_one_lines: []const []const u8 = if (method == .no_zwj)
+                &.{ "xa \u{200d}", "\u{301}x" }
+            else
+                &.{ "xa \u{200d}\u{301}", "x" };
+            const expected_split_lines = expected_one_lines;
+            var split_chunks = try TextBuffer.init(std.testing.allocator, &pools.graphemes, &pools.links, method);
+            defer split_chunks.deinit();
+            try split_chunks.setText(parts[0]);
+            for (parts[1..]) |piece| try split_chunks.append(piece);
+
+            const split_view = try TextBufferView.init(std.testing.allocator, split_chunks);
+            defer split_view.deinit();
+            split_view.setWrapMode(.word);
+            split_view.setWrapWidth(3);
+            try std.testing.expectEqualSlices(u32, &.{ 3, 1 }, split_view.getCachedLineInfo().line_width_cols);
+            for (one_view.getVirtualLines(), split_view.getVirtualLines(), expected_one_lines, expected_split_lines) |one_line, split_line, expected_one, expected_split| {
+                var one_bytes: [64]u8 = undefined;
+                var split_bytes: [64]u8 = undefined;
+                try std.testing.expectEqualStrings(expected_one, lineBytes(one_line, one_chunk, &one_bytes));
+                try std.testing.expectEqualStrings(expected_split, lineBytes(split_line, split_chunks, &split_bytes));
+            }
+        }
+    }
+}
+
 test "TextBufferView edited text wraps like freshly loaded text" {
     const EditBuffer = @import("../edit-buffer.zig").EditBuffer;
     var pools = TestPools.init(std.testing.allocator);

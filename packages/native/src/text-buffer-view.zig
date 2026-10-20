@@ -1688,6 +1688,7 @@ pub const UnifiedTextBufferView = struct {
             pending_word_pieces: if (wrap_mode == .word) std.ArrayListUnmanaged(PendingWordPiece) else void = if (wrap_mode == .word) .empty else {},
             pending_word_width_cols: if (wrap_mode == .word) u32 else void = if (wrap_mode == .word) 0 else {},
             pending_word_last_class: if (wrap_mode == .word) utf8.WordClass else void = if (wrap_mode == .word) .other else {},
+            pending_word_predecessor_cp: if (wrap_mode == .word) ?u21 else void = if (wrap_mode == .word) null else {},
             word_line_preflight: if (wrap_mode == .word) bool else void,
             word_line_chunks: if (wrap_mode == .word) std.ArrayListUnmanaged(*const TextChunk) else void = if (wrap_mode == .word) .empty else {},
             word_line_first_chunk: if (wrap_mode == .word) ?*const TextChunk else void = if (wrap_mode == .word) null else {},
@@ -1804,6 +1805,10 @@ pub const UnifiedTextBufferView = struct {
 
             fn queuePendingWordPiece(wctx: *@This(), chunk: *const TextChunk, col_start_in_chunk: u32, width_cols: u32, byte_start: u32, byte_end: u32) void {
                 if (wctx.failed or (width_cols == 0 and byte_end <= byte_start)) return;
+                if (wctx.pending_word_predecessor_cp == null and byte_start > 0) {
+                    const chunk_bytes = chunk.getBytes(wctx.text_buffer.memRegistry());
+                    wctx.pending_word_predecessor_cp = utf8.chunkWordClassEdges(chunk_bytes[0..byte_start]).last_cp;
+                }
 
                 if (wctx.pending_word_pieces.items.len > 0) {
                     const last = &wctx.pending_word_pieces.items[wctx.pending_word_pieces.items.len - 1];
@@ -1832,6 +1837,7 @@ pub const UnifiedTextBufferView = struct {
                 wctx.pending_word_pieces.clearRetainingCapacity();
                 wctx.pending_word_width_cols = 0;
                 wctx.pending_word_last_class = .other;
+                wctx.pending_word_predecessor_cp = null;
             }
 
             fn dropPendingWordPrefix(wctx: *@This(), count: usize) void {
@@ -1937,7 +1943,54 @@ pub const UnifiedTextBufferView = struct {
                 dropPendingWordPrefix(wctx, consumed_count);
                 const consumed_width_cols = wctx.current_vline_width_cols - vline_width_cols_before;
                 wctx.pending_word_width_cols -= consumed_width_cols;
+                if (consumed_width_cols > 0) wctx.pending_word_predecessor_cp = null;
                 return consumed_width_cols > 0;
+            }
+
+            fn pendingWordZeroWidthPrefixBytes(wctx: *@This(), piece: PendingWordPiece) u32 {
+                const chunk_bytes = piece.chunk.getBytes(wctx.text_buffer.memRegistry());
+                const fit = fitPendingWordPiece(wctx, piece, 0, false);
+                if (fit.bytes_used == 0) return 0;
+                var previous_cp = wctx.pending_word_predecessor_cp;
+                var break_state = @import("uucode").grapheme.BreakState.default;
+                var offset = piece.byte_start;
+                const end = piece.byte_start + fit.bytes_used;
+                while (offset < end) {
+                    const decoded = utf8.decodeUtf8Unchecked(chunk_bytes, offset);
+                    if (previous_cp) |prev| {
+                        if (utf8.isGraphemeBreak(prev, decoded.cp, &break_state, wctx.text_buffer.widthMethod())) {
+                            return offset - piece.byte_start;
+                        }
+                    }
+                    previous_cp = decoded.cp;
+                    offset += decoded.len;
+                }
+                return fit.bytes_used;
+            }
+
+            fn consumePendingWordCombiningPrefix(wctx: *@This()) bool {
+                if (wctx.pending_word_pieces.items.len == 0 or wctx.failed) return true;
+
+                var consumed_count: usize = 0;
+                while (consumed_count < wctx.pending_word_pieces.items.len) {
+                    const piece = wctx.pending_word_pieces.items[consumed_count];
+                    const prefix_bytes = pendingWordZeroWidthPrefixBytes(wctx, piece);
+                    if (prefix_bytes == 0) break;
+                    if (!addVirtualChunkSticky(wctx, piece.chunk, piece.byte_start, prefix_bytes, piece.col_start_in_chunk, 0)) return false;
+
+                    const piece_bytes = piece.byte_end - piece.byte_start;
+                    const piece_slice = piece.chunk.getBytes(wctx.text_buffer.memRegistry())[piece.byte_start .. piece.byte_start + prefix_bytes];
+                    wctx.pending_word_predecessor_cp = utf8.chunkWordClassEdges(piece_slice).last_cp;
+                    if (prefix_bytes == piece_bytes) {
+                        consumed_count += 1;
+                    } else {
+                        wctx.pending_word_pieces.items[consumed_count].byte_start += prefix_bytes;
+                        break;
+                    }
+                }
+
+                dropPendingWordPrefix(wctx, consumed_count);
+                return true;
             }
 
             fn appendPendingWordToLine(wctx: *@This()) void {
@@ -1951,6 +2004,7 @@ pub const UnifiedTextBufferView = struct {
                 while (wctx.pending_word_width_cols > 0 and !wctx.failed) {
                     const wrap_limit_cols = wctx.wordWrapWidth();
                     if (wctx.current_vline_width_cols > 0 and wctx.current_vline_width_cols + wctx.pending_word_width_cols > wrap_limit_cols) {
+                        if (!consumePendingWordCombiningPrefix(wctx)) return;
                         if (!commitVirtualLineSticky(wctx)) return;
                         continue;
                     }
@@ -1961,7 +2015,13 @@ pub const UnifiedTextBufferView = struct {
                     }
                     appendPendingWordToLine(wctx);
                 }
-                if (wctx.pending_word_pieces.items.len > 0 and !wctx.failed) appendPendingWordToLine(wctx);
+                if (wctx.pending_word_pieces.items.len > 0 and !wctx.failed) {
+                    if (wctx.pending_word_width_cols == 0 and wctx.current_vline_width_cols >= wctx.wordWrapWidth()) {
+                        if (!consumePendingWordCombiningPrefix(wctx)) return;
+                        if (wctx.pending_word_pieces.items.len > 0 and !commitVirtualLineSticky(wctx)) return;
+                    }
+                    appendPendingWordToLine(wctx);
+                }
             }
 
             inline fn placeCompleteWordPiece(wctx: *@This(), chunk: *const TextChunk, col_start_in_chunk: u32, width_cols: u32, byte_start: u32, byte_end: u32) void {
@@ -2004,6 +2064,15 @@ pub const UnifiedTextBufferView = struct {
             }
 
             fn processWhitespaceBreak(wctx: *@This(), chunk: *const TextChunk, col_start: u32, byte_start: u32, wrap_break: utf8.LayoutWrapBreak) void {
+                const chunk_bytes = chunk.getBytes(wctx.text_buffer.memRegistry());
+                const separator_end = @min(wrap_break.byteEnd(), @as(u32, @intCast(chunk_bytes.len)));
+                const separator_cp: ?u21 = if (wrap_break.byte_start < separator_end)
+                    utf8.chunkWordClassEdges(chunk_bytes[wrap_break.byte_start..separator_end]).last_cp
+                else
+                    null;
+                defer {
+                    if (separator_cp) |cp| wctx.pending_word_predecessor_cp = cp;
+                }
                 // A fitting word and separator already coalesce into one chunk. Queued
                 // zero-width pieces must still precede the word, so they block this path.
                 if (wctx.pending_word_pieces.items.len == 0 and wrap_break.width_cols > 0 and wrap_break.col_start > col_start and
