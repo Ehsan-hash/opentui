@@ -221,18 +221,43 @@ describe("env registry", () => {
     }).toThrow("already registered with different configuration")
   })
 
-  test("should throw when re-registering with different description", () => {
-    registerEnvVar({
+  test("should allow re-registering with different description and preserve first configuration", () => {
+    const firstConfig = {
       name: "TEST_DIFFERENT_DESC",
       description: "First description",
       type: "string",
-    })
+      default: "first",
+    } as const
+
+    registerEnvVar(firstConfig)
 
     expect(() => {
       registerEnvVar({
         name: "TEST_DIFFERENT_DESC",
         description: "Second description",
         type: "string",
+        default: "first",
+      })
+    }).not.toThrow()
+
+    expect(envRegistry.TEST_DIFFERENT_DESC).toEqual(firstConfig)
+    expect(env.TEST_DIFFERENT_DESC).toBe("first")
+  })
+
+  test("should throw when re-registering with different required setting", () => {
+    registerEnvVar({
+      name: "TEST_DIFFERENT_REQUIRED",
+      description: "Test for different required setting",
+      type: "string",
+      required: false,
+    })
+
+    expect(() => {
+      registerEnvVar({
+        name: "TEST_DIFFERENT_REQUIRED",
+        description: "Test for different required setting",
+        type: "string",
+        required: true,
       })
     }).toThrow("already registered with different configuration")
   })

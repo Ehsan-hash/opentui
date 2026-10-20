@@ -44,12 +44,7 @@ export const envRegistry: Record<string, EnvVarConfig> = singleton("env-registry
 export function registerEnvVar(config: EnvVarConfig): void {
   const existing = envRegistry[config.name]
   if (existing) {
-    if (
-      existing.description !== config.description ||
-      existing.type !== config.type ||
-      existing.default !== config.default ||
-      existing.required !== config.required
-    ) {
+    if (existing.type !== config.type || existing.default !== config.default || existing.required !== config.required) {
       throw new Error(
         `Environment variable "${config.name}" is already registered with different configuration. ` +
           `Existing: ${JSON.stringify(existing)}, New: ${JSON.stringify(config)}`,
