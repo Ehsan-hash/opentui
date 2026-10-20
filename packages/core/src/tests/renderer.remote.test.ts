@@ -201,6 +201,26 @@ describe("remote detection", () => {
     expect(forcedOff.hyperlinks).toBe(false)
   })
 
+  test("default local forwarding includes WMUX while default remote forwarding stays empty", async () => {
+    const baseEnv = {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      TMPDIR: process.env.TMPDIR ?? "/tmp",
+      WMUX: "1",
+    }
+
+    const local = await getCapabilitiesFromChild({ remote: false }, baseEnv)
+    const remote = await getCapabilitiesFromChild({ remote: true }, baseEnv)
+    const explicitlyForwardedRemote = await getCapabilitiesFromChild(
+      { remote: true, forwardEnvKeys: ["WMUX"] },
+      baseEnv,
+    )
+
+    expect(local.hyperlinks).toBe(true)
+    expect(remote.hyperlinks).toBe(false)
+    expect(explicitlyForwardedRemote.hyperlinks).toBe(true)
+  })
+
   test("process stdout with memory output preserves auto remote detection", async () => {
     const caps = await getCapabilitiesFromChild(
       {},

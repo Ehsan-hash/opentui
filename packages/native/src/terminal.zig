@@ -1499,6 +1499,9 @@ fn isHyperlinkTerm(value: []const u8) bool {
 }
 
 fn isHyperlinkHostEnv(env_map: *const std.process.Environ.Map) bool {
+    if (env_map.get("WMUX")) |marker| {
+        if (std.mem.eql(u8, marker, "1")) return true;
+    }
     if (env_map.get("TERM_PROGRAM")) |program| {
         if (std.mem.eql(u8, program, "vscode") or
             std.mem.eql(u8, program, "zed") or

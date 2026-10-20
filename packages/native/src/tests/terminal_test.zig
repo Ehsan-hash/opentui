@@ -818,6 +818,73 @@ test "environment overrides - direct Windows Terminal hyperlinks do not require 
     try testing.expectEqual(builtin.os.tag == .windows, term.caps.hyperlinks);
 }
 
+test "environment overrides - WMUX marker enables hyperlinks without terminal identity" {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("WMUX", "1");
+
+    const term = Terminal.init(.{ .env_map = &env });
+
+    try testing.expect(term.caps.hyperlinks);
+}
+
+test "environment overrides - WMUX marker enables hyperlinks with WSL identity markers" {
+    for ([_]struct { key: []const u8, value: []const u8 }{
+        .{ .key = "WSL_DISTRO_NAME", .value = "Ubuntu" },
+        .{ .key = "WSL_INTEROP", .value = "/run/WSL/123_interop" },
+    }) |marker| {
+        var env = std.process.Environ.Map.init(testing.allocator);
+        defer env.deinit();
+        try env.put("WMUX", "1");
+        try env.put(marker.key, marker.value);
+
+        const term = Terminal.init(.{ .env_map = &env });
+
+        try testing.expect(term.caps.hyperlinks);
+    }
+}
+
+test "environment overrides - WMUX requires the documented enabled marker" {
+    const values = [_]?[]const u8{ null, "", "0", "false" };
+
+    for (values) |value| {
+        var env = std.process.Environ.Map.init(testing.allocator);
+        defer env.deinit();
+        if (value) |marker| try env.put("WMUX", marker);
+
+        const term = Terminal.init(.{ .env_map = &env });
+
+        try testing.expect(!term.caps.hyperlinks);
+    }
+}
+
+test "environment overrides - FORCE_HYPERLINK=0 disables WMUX detection" {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("WMUX", "1");
+    try env.put("FORCE_HYPERLINK", "0");
+
+    const term = Terminal.init(.{ .env_map = &env });
+
+    try testing.expect(!term.caps.hyperlinks);
+}
+
+test "environment overrides - WMUX detection stays below multiplexer and XTVERSION gates" {
+    var multiplexer = Terminal.init(.{});
+    defer multiplexer.deinit();
+    try multiplexer.setHostEnvVar(testing.allocator, "TMUX", "/tmp/tmux-1000/default,12345,0");
+    try multiplexer.setHostEnvVar(testing.allocator, "WMUX", "1");
+    try testing.expectEqual(Terminal.Multiplexer.tmux, multiplexer.multiplexer);
+    try testing.expect(!multiplexer.caps.hyperlinks);
+
+    var probed = Terminal.init(.{});
+    defer probed.deinit();
+    probed.processCapabilityResponse("\x1bP>|unknown 1.0\x1b\\");
+    try probed.setHostEnvVar(testing.allocator, "WMUX", "1");
+    try testing.expect(probed.term_info.from_xtversion);
+    try testing.expect(!probed.caps.hyperlinks);
+}
+
 test "environment overrides - enables hyperlinks for WSL Windows Terminal xterm" {
     var env = std.process.Environ.Map.init(testing.allocator);
     defer env.deinit();

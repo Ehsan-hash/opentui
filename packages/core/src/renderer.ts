@@ -701,6 +701,7 @@ const DEFAULT_FORWARDED_ENV_KEYS = [
   "STY",
   "WSL_DISTRO_NAME",
   "WSL_INTEROP",
+  "WMUX",
 ] as const
 
 // Kitty keyboard protocol flags
